@@ -5597,9 +5597,32 @@ static bool hudArt(const char* key, float x, float y, float frac = 1, Color c = 
     return true;
 }
 
+// The pack's heart (hp) or drumstick (hunger) icon for how full something is: whole,
+// half or empty, drawn over the icon end of its bar.
+static const char* fullnessIcon(bool heart, bool small, float frac) {
+    int k = frac >= 0.6f ? 0 : frac >= 0.25f ? 1 : 2;
+    static const char* H[2][3] = {{"hp/heart_full", "hp/heart_half", "hp/heart_empty"},
+                                  {"hp/small/heart_small_full", "hp/small/heart_small_half", "hp/small/heart_small_empty"}};
+    static const char* F[2][3] = {{"hunger/hunger_full", "hunger/hunger_half", "hunger/hunger_empty"},
+                                  {"hunger/small/hunger_small_full", "hunger/small/hunger_small_half", "hunger/small/hunger_small_empty"}};
+    return heart ? H[small][k] : F[small][k];
+}
+
+// A row of `n` small hearts for a health fraction, each whole, half or empty.
+static void drawHearts(float x, float y, float frac, int n, bool small = true) {
+    for (int i = 0; i < n; i++) {
+        float f = clampf(frac * n - i, 0, 1);
+        const char* key = f >= 0.75f ? (small ? "hp/small/heart_small_full" : "hp/heart_full")
+                        : f >= 0.25f ? (small ? "hp/small/heart_small_half" : "hp/heart_half")
+                                     : (small ? "hp/small/heart_small_empty" : "hp/heart_empty");
+        if (!hudArt(key, x + i * (small ? 9.0f : 12.0f), y)) { UI::bar(x, y + 3, n * 9.0f, 3, frac, P_CORAL); return; }
+    }
+}
+
 // A magazine's rounds as a strip of the pack's bullet indicators, full then spent,
-// fitted into `width` (a mark stands for several rounds in a big magazine).
-static void drawBulletStrip(const Item& w, float x, float y, float width) {
+// fitted into `width` (a mark stands for several rounds in a big magazine). With room
+// (`maxH`) and few enough rounds, the big indicators, one per round.
+static void drawBulletStrip(const Item& w, float x, float y, float width, float maxH = 0) {
     const WeaponDef* wd = weaponDef(w.id);
     if (!wd) return;
     int base = baseWeapon(w.id);
@@ -5607,6 +5630,19 @@ static void drawBulletStrip(const Item& w, float x, float y, float width) {
     std::string full = std::string("ui/bullet indicators/small/") + kind + "-bullet_small";
     const Assets::Sprite* on = Assets::find(full);
     const Assets::Sprite* off = Assets::find(full + "_empty");
+    {
+        std::string bigKey = std::string("ui/bullet indicators/") + kind + "-bullet";
+        const Assets::Sprite* bOn = Assets::find(bigKey);
+        const Assets::Sprite* bOff = Assets::find(bigKey + "_empty");
+        int mag = std::max(1, magSizeOf(w));
+        if (bOn && bOff && maxH >= bOn->h && mag * (bOn->w + 1.0f) <= width) {
+            for (int i = 0; i < mag; i++) {
+                const Assets::Sprite* s = i < w.data ? bOn : bOff;
+                R::frame(s->frame(0), x + i * (bOn->w + 1.0f), y, (float)s->w, (float)s->h);
+            }
+            return;
+        }
+    }
     if (!on || !off) return;
     int mag = std::max(1, magSizeOf(w));
     int fit = std::max(1, (int)(width / (on->w + 1)));
@@ -5747,6 +5783,7 @@ static void drawSeatCard(int k, float x, float y, float w) {
     R::rect(hx + 11, hy + 5, 40, 2, pal(P_DARK));
     if (!(hudArt("hp/small/hp_small", hx + 8, hy + 5, (3 + 40 * hpFrac) / 43.0f) && hudArt("hp/small/hp-bar_small", hx, hy)))
         UI::bar(hx, hy + 3, 52, 4, hpFrac, P_CORAL);
+    else hudArt(fullnessIcon(true, true, hpFrac), hx, hy);
     R::text(std::to_string((int)std::ceil(p.hp)), hx + 56, hy + 2, pal(P_CORAL));
     UI::bar(hx + 11, hy + 11, 40, 2, pl.stamina / p.maxStamina(), P_YGREEN);
     if (!p.armor.empty()) UI::bar(hx + 11, hy + 14, 40, 2, p.armor.data / float(itemDef(p.armor.id).param), P_BLUE);
@@ -5810,6 +5847,7 @@ void drawHUD() {
     R::rect(6 + 13, 6 + 4, 40, 4, pal(P_DARK, 0.85f));
     if (hudArt("hp/hp", 6 + 10, 6 + 4, (3 + 40 * hpFrac) / 43.0f) && hudArt("hp/hp-bar", 6, 6)) {
         barX = 6 + 13; barW = 40; textX = 6 + 58;
+        hudArt(fullnessIcon(true, false, hpFrac), 6, 6);   // the heart empties with you
         if (pl.bleedT > 0) R::rectOutline(6 + 12, 6 + 3, 42, 6, pal(P_CORAL, bleedOn ? 1.0f : 0.3f));
     } else {
         UI::bar(8, 8, 90, 7, hpFrac, P_CORAL);
@@ -5824,8 +5862,16 @@ void drawHUD() {
         R::rectOutline(barX - 1, yy - 1, barW + 2, 6, pal(P_DARK));
         yy += 7;
     }
-    UI::bar(barX, yy, barW, 3, pl.stamina / p.maxStamina(), P_YGREEN);
-    R::rectOutline(barX - 1, yy - 1, barW + 2, 5, pal(P_DARK));
+    // Stamina: the pack's hunger bar, its drumstick going as you tire (0.12v).
+    float stFrac = clampf(pl.stamina / p.maxStamina(), 0, 1);
+    R::rect(6 + 12, yy + 2, 36, 2, pal(P_DARK, 0.85f));
+    if (barW == 40 && hudArt("hunger/hunger", 6 + 11, yy + 2, stFrac, pl.exhausted ? pal(P_CORAL) : Color()) && hudArt("hunger/hunger-bar", 6, yy - 4)) {
+        hudArt(fullnessIcon(false, false, stFrac), 6, yy - 4);
+        yy += 8;
+    } else {
+        UI::bar(barX, yy, barW, 3, pl.stamina / p.maxStamina(), P_YGREEN);
+        R::rectOutline(barX - 1, yy - 1, barW + 2, 5, pal(P_DARK));
+    }
     if (s_hordeActive || p.baseHp < baseMaxHp()) {
         yy += 6;
         bool hit = s_hordeActive && std::fmod(G.realTime, 0.6f) < 0.3f && p.baseHp < baseMaxHp() * 0.35f;
@@ -5855,14 +5901,14 @@ void drawHUD() {
         for (int i = 0; i < Coop::MAX_PLAYERS; i++) {
             const Coop::NetPlayer& np = Coop::player(i);
             if (i == mySlot() || !np.used) continue;
-            R::rect(7, ty, 96, 11, pal(P_DARK, 0.75f));
+            R::rect(7, ty, 128 + R::textWidth(T("BUNKER")), 11, pal(P_DARK, 0.75f));
             R::rect(8, ty + 2, 6, 7, pal(Coop::colorPal(i)));
             std::string nm = np.name.size() > 12 ? np.name.substr(0, 12) : np.name;
             R::text(nm, 17, ty + 2, pal(Coop::colorPal(i)));
             const char* where = np.downed ? "DOWN" : np.where == Coop::W_RAID ? "OUT" : np.where == Coop::W_BASE ? "BUNKER" : "...";
             if (p.rivals) where = "";   // Rivals: you do not know what the others are doing
-            R::text(T(where), 104, ty + 2, pal(np.downed ? P_CORAL : P_LAVENDER));
-            if (np.maxHp > 0) UI::bar(17, ty + 9, 60, 1, np.hp / np.maxHp, P_CORAL);
+            R::text(T(where), 136, ty + 2, pal(np.downed ? P_CORAL : P_LAVENDER));
+            if (np.maxHp > 0 && !p.rivals) drawHearts(96, ty, np.hp / np.maxHp, 4);   // their health, in the pack's small hearts
             ty += 13;
         }
     }
@@ -5935,7 +5981,7 @@ void drawHUD() {
         Color tc = tierColor(itemTier(w));
         R::text(T(itemDef(w.id).name), bx + 24, by + 5, tc);
         R::rectOutline(bx, by, 120, bh, tc.withA(0.8f));
-        drawBulletStrip(w, bx + 4, by + 38, 112);
+        drawBulletStrip(w, bx + 4, by + 38, 112, bh - 39);
         if (elite) R::text(T("ELITE"), bx + 116 - R::textWidth(T("ELITE")), by + 5, pal(P_YELLOW, 0.6f + 0.4f * std::sin(G.realTime * 4.0f)));
         int reserve = countInSlots(p.inv, wd->ammo, p.invCapacity());
         std::string ammo = std::to_string(w.data);

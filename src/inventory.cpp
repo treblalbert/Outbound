@@ -419,6 +419,15 @@ void drawInventoryPanel(float x, float y, InvMode mode, std::vector<Item>* other
     char buf[64];
     std::snprintf(buf, sizeof buf, "HP %d/%d", (int)p.hp, (int)p.maxHp());
     R::text(buf, x + 6, by, pal(P_CORAL));
+    // And in the pack's small hearts, five for a full bar (0.12v).
+    {
+        float frac = clampf(p.hp / p.maxHp(), 0, 1), hx = x + 10 + R::textWidth(buf);
+        for (int i = 0; i < 5; i++) {
+            float f = clampf(frac * 5 - i, 0, 1);
+            UI::skinSprite(f >= 0.75f ? "hp/small/heart_small_full" : f >= 0.25f ? "hp/small/heart_small_half" : "hp/small/heart_small_empty",
+                           hx + i * 9, by - 2);
+        }
+    }
     R::text(T2("{0}/{1} slots", std::to_string(usedInvSlots()), std::to_string(cap)), x + 6, by + 10, pal(P_PURPLE));
     float sortW = 56, sortX = x + w - 6 - sortW;
     if (UI::hover(sortX, by + 9, sortW, 12)) UI::tooltip(T("Sort"), T("Sort the inventory by kind and value"));

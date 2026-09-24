@@ -425,6 +425,10 @@ void base_draw() {
     R::text("$" + std::to_string(p.money), 100, 5, pal(P_YGREEN));
     char buf[64];
     std::snprintf(buf, sizeof buf, "HP %d/%d", (int)p.hp, (int)p.maxHp());
+    {
+        float frac = p.hp / p.maxHp();
+        UI::skinSprite(frac >= 0.6f ? "hp/heart_full" : frac >= 0.25f ? "hp/heart_half" : "hp/heart_empty", 144, 2);
+    }
     R::text(buf, 160, 5, pal(P_CORAL));
     R::text(T("Bunker"), 236, 5, pal(P_ORANGE));
     UI::bar(272, 6, 44, 5, p.baseHp / baseMaxHp(), P_ORANGE);

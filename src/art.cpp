@@ -247,7 +247,7 @@ void loadProps() {
     for (const char* b : barrels) add(g_barrels, std::string("objects/") + b);
 
     const char* carSets[] = {"car_1", "car_2", "car_3", "car_4", "car_6", "car_7", "car_8"};
-    const char* carColors[] = {"blue", "gray", "green", "orange", "red", "yellow"};
+    const char* carColors[] = {"blue", "gray", "green", "orange", "red", "yellow", "light-green", "dark-blue"};   // the van and bus come in light green, rust in dark blue
     for (const char* set : carSets)
         for (const char* col : carColors) {
             if (const Sprite* s = Assets::search({"objects/vehicles/normal/", std::string(set) + "_", std::string("_") + col}))
