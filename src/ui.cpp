@@ -550,7 +550,7 @@ int itemSlot(float x, float y, const Item& it, bool highlight, bool dim) {
     }
     if (!it.empty()) {
         const ItemDef& d = itemDef(it.id);
-        itemIcon(it.id, x + 2, y + 2, 16, dim ? pal(P_PURPLE) : Color());
+        itemIcon(it.id, x + 2, y + 2, 16, dim ? pal(P_PURPLE) : Color(), it.count);
         if (it.count > 1) {
             std::string c = std::to_string(it.count);
             R::textShadow(c, x + SLOT - 1 - R::textWidth(c), y + SLOT - 8, pal(P_WHITE));
@@ -614,8 +614,8 @@ void itemTooltip(const Item& it, const std::string& extra) {
     else tooltip(title, body, rarityCol[d.rarity]);
 }
 
-void itemIcon(int itemId, float x, float y, float box, Color tint) {
-    if (const Assets::Sprite* s = Art::itemIcon(itemId)) {
+void itemIcon(int itemId, float x, float y, float box, Color tint, int count) {
+    if (const Assets::Sprite* s = Art::itemIcon(itemId, count)) {
         const Assets::Frame& f = s->frame(0);
         float sc = std::min(1.0f, std::min(box / f.w, box / f.h));
         R::frame(f, std::floor(x + (box - f.w * sc) * 0.5f), std::floor(y + (box - f.h * sc) * 0.5f), f.w * sc, f.h * sc, tint);

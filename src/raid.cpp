@@ -142,7 +142,10 @@ int s_hordeKilled = 0;
 int s_hordeEarned = 0;
 float s_raidElapsed = 0;
 std::string s_hordeNote;       // what happened to a horde fought without you
-struct ZombieCorpse { Vec2 pos; int kind; bool left; float t; };
+struct ZombieCorpse { Vec2 pos; int kind; bool left; float t; int fall = 1; bool noAxe = false; };
+// An axe in flight, landing and lying where it fell (0.12v, the axe zombie's).
+struct FlyingAxe { Vec2 pos, vel; float flight, t = 0; int stage = 0, dir = 2; uint32_t owner; float dmg; };
+std::vector<FlyingAxe> s_axes;
 std::vector<ZombieCorpse> s_zCorpses;
 void resolveHordeOffscreen();
 
@@ -712,7 +715,7 @@ void killEnemy(Enemy& e) {
             missionAddKill((int)EnemyType::Zombie);
         }
         if (s_zCorpses.size() > 160) s_zCorpses.erase(s_zCorpses.begin());
-        s_zCorpses.push_back({e.pos, e.zkind, std::cos(e.angle) < 0, 0});
+        s_zCorpses.push_back({e.pos, e.zkind, std::cos(e.angle) < 0, 0, s_rng.chance(0.5f) ? 1 : 0, e.noAxe});
         addParticles(e.pos, 12, P_CORAL, 20, 70, 0.3f, 0.7f, false, 1);
         G.decals.push_back({e.pos, s_rng.chance(0.5f) ? BLOOD0 : BLOOD1, s_rng.range(0, 6.28f)});
         spawnBloodPool(e.pos);
@@ -753,7 +756,7 @@ void killEnemy(Enemy& e) {
             missionAddKill((int)EnemyType::Zombie);
         }
         if (s_zCorpses.size() > 160) s_zCorpses.erase(s_zCorpses.begin());
-        s_zCorpses.push_back({e.pos, e.zkind, std::cos(e.angle) < 0, 0});
+        s_zCorpses.push_back({e.pos, e.zkind, std::cos(e.angle) < 0, 0, s_rng.chance(0.5f) ? 1 : 0, e.noAxe});
         addParticles(e.pos, 12, P_CORAL, 20, 70, 0.3f, 0.7f, false, 1);
         G.decals.push_back({e.pos, s_rng.chance(0.5f) ? BLOOD0 : BLOOD1, s_rng.range(0, 6.28f)});
         spawnBloodPool(e.pos);
@@ -771,7 +774,9 @@ void killEnemy(Enemy& e) {
     G.decals.push_back({e.pos, s_rng.chance(0.5f) ? BLOOD0 : BLOOD1, s_rng.range(0, 6.28f)});
     spawnBloodPool(e.pos);
 
-    int id = G.world.addContainer(e.pos, CK_CORPSE, -1, -1, (uint8_t)(s_rng.next() | 0x80));   // 0x80: a raider's body
+    // 0x80: a raider's body; 0x40: a helmet rolls off it (see Art::corpse).
+    bool helmeted = e.type == EnemyType::Heavy || e.type == EnemyType::Sniper || e.type == EnemyType::Bandit;
+    int id = G.world.addContainer(e.pos, CK_CORPSE, -1, -1, (uint8_t)((s_rng.next() & 0x3F) | 0x80 | (helmeted ? 0x40 : 0)));
     Container& c = G.world.containers[id];
     c.searchTime = 0.9f;
     Vec2 sp = G.world.surfacePos(e.pos);
@@ -801,6 +806,64 @@ void killEnemy(Enemy& e) {
         addToSlots(c.items, v);
     }
     if (s_rng.chance(0.3f)) addToSlots(c.items, makeItem(IT_BANDAGE, 1));
+}
+
+void damageEnemy(Enemy& e, float dmg, Vec2 dir);
+
+// ---- melee (0.12v): a punch, or a swing of the bat if you carry one. Short reach, a
+// wide arc in front of you, and a shove that buys a moment. It costs a little stamina.
+bool carryingBat() {
+    const Profile& p = G.prof;
+    for (int i = 0; i < p.invCapacity(); i++)
+        if (p.inv[i].id == IT_BAT) return true;
+    return false;
+}
+
+void melee() {
+    Player& pl = G.player;
+    if (pl.meleeCd > 0 || s_ride >= 0 || s_downT >= 0 || s_deathT >= 0) return;
+    bool bat = carryingBat();
+    float reach = bat ? 26.0f : 19.0f, dmg = bat ? (float)itemDef(IT_BAT).param : 16.0f, push = bat ? 16.0f : 8.0f;
+    float cost = bat ? 10.0f : 7.0f;
+    if (pl.stamina < cost * 0.5f) return;
+    pl.stamina = std::max(0.0f, pl.stamina - cost);
+    pl.meleeCd = bat ? 0.62f : 0.42f;
+    pl.act = 2;
+    pl.actT = 0;
+    sfx(Snd::melee, bat ? 0.7f : 0.5f, bat ? 0.8f : 1.15f);
+    Vec2 f = fromAngle(pl.angle);
+    bool hit = false;
+    for (Enemy& e : G.enemies) {
+        if (e.dead) continue;
+        Vec2 d = e.pos - pl.pos;
+        float l = length(d);
+        if (l > reach + ENEMY_R || l < 0.01f || dot(d / l, f) < 0.35f) continue;
+        hit = true;
+        if (isGuest()) {
+            Net::Writer w;
+            w.u8(Coop::M_HIT);
+            w.u32(e.netId);
+            w.f32(dmg);
+            w.f32(f.x);
+            w.f32(f.y);
+            Coop::toHost(w, true);
+            bloodSplash(e.pos, f);
+        } else {
+            s_dmgOwner = mySlot();
+            damageEnemy(e, dmg, f);
+            s_dmgOwner = -1;
+            if (!e.dead) {
+                // Knocked back and put off its stroke.
+                bool big = e.type == EnemyType::Heavy || (e.type == EnemyType::Zombie && e.zkind == 1);
+                e.pos = G.world.move(e.pos, (d / l) * (big ? push * 0.35f : push), ENEMY_R);
+                e.meleeCd = std::max(e.meleeCd, 0.45f);
+            }
+        }
+    }
+    if (hit) {
+        sfx(Snd::hit, 0.6f, bat ? 0.7f : 0.9f);
+        addShake(bat ? 2.0f : 1.0f, pl.pos);
+    }
 }
 
 void damageEnemy(Enemy& e, float dmg, Vec2 dir) {
@@ -889,7 +952,64 @@ void explode(Vec2 pos, float radius, float dmg, bool fromPlayer, bool harmless =
     if (!s_sim && !harmless) alertEnemies(pos, 600);
 }
 
+// ---- spent casings (0.12v): Character/Guns/Bullets. Kicked out of the gun's side,
+// they bounce and lie where they land for a while; a shotgun drops its shell as the
+// next one is racked in.
+struct Casing { Vec2 pos, vel; float z, vz, t, delay, spin; int kind; };
+std::vector<Casing> s_casings;
+
+void ejectCasing(Vec2 origin, float angle, int weaponId) {
+    int base = baseWeapon(weaponId);
+    if (base == IT_LAUNCHER || s_sim) return;
+    Casing c;
+    c.kind = base == IT_SHOTGUN ? 2 : (base == IT_PISTOL || base == IT_REVOLVER || base == IT_SMG) ? 0 : 1;
+    // Out of the right-hand side of the gun, a little back.
+    Vec2 f = fromAngle(angle), side(-f.y, f.x);
+    c.pos = origin - f * 4.0f;
+    c.vel = side * s_rng.range(28, 48) - f * s_rng.range(4, 14);
+    c.z = 6;
+    c.vz = s_rng.range(30, 50);
+    c.t = 0;
+    c.delay = c.kind == 2 ? 0.28f : 0;
+    c.spin = s_rng.range(-14, 14);
+    if (s_casings.size() > 220) s_casings.erase(s_casings.begin());
+    s_casings.push_back(c);
+}
+
+void updateCasings(float dt) {
+    for (Casing& c : s_casings) {
+        if (c.delay > 0) { c.delay -= dt; continue; }
+        c.t += dt;
+        if (c.z > 0 || c.vz > 0) {
+            c.vz -= 260 * dt;
+            c.z += c.vz * dt;
+            c.pos += c.vel * dt;
+            if (c.z <= 0) {
+                c.z = 0;
+                if (c.vz < -25) { c.vz = -c.vz * 0.35f; c.vel *= 0.5f; }
+                else { c.vz = 0; c.vel = Vec2(); }
+            }
+        }
+    }
+    s_casings.erase(std::remove_if(s_casings.begin(), s_casings.end(), [](const Casing& c) { return c.t > 25; }), s_casings.end());
+}
+
+void drawCasings() {
+    static const Assets::Sprite* art[3] = {Assets::find("character/guns/bullets/pistol-bullet_casting"),
+                                           Assets::find("character/guns/bullets/gun-bullet_casing"),
+                                           Assets::find("character/guns/bullets/shotgun-bullet")};
+    for (const Casing& c : s_casings) {
+        if (c.delay > 0) continue;
+        const Assets::Sprite* s = art[c.kind];
+        float a = clampf((25 - c.t) / 4.0f, 0, 1);
+        float rot = c.z > 0 ? c.t * c.spin : c.spin;   // spinning in the air, lying still after
+        if (s) R::spriteAt(*s, 0, c.pos + Vec2(0, -c.z), R::Pivot::Center, 1, Color(1, 1, 1, a), false, rot);
+        else R::rect(std::floor(c.pos.x), std::floor(c.pos.y - c.z), 2, 1, pal(P_YELLOW, a));
+    }
+}
+
 void spawnBullets(Vec2 origin, float angle, const WeaponDef& wd, int weaponId, float spreadMul, float extraSpread, bool fromPlayer, float dmgMul) {
+    ejectCasing(origin, angle, weaponId);
     for (int i = 0; i < wd.pellets; i++) {
         float spread = (wd.spread * spreadMul + extraSpread) * (s_rng.f() + s_rng.f() - 1.0f);
         if (wd.pellets > 1) spread = (wd.spread * spreadMul) * (s_rng.f() * 2 - 1);
@@ -1205,7 +1325,7 @@ void coopDeath() {
             for (const Item& it : chunk) { w.i16(it.id); w.i16(it.count); w.i32(it.data); w.u8((uint8_t)it.tier); w.u8(it.flags); }
             Coop::toHost(w, true);
         } else {
-            int id = G.world.addContainer(pos, CK_CORPSE, -1, -1, (uint8_t)(s_rng.next() & 0x7F));
+            int id = G.world.addContainer(pos, CK_CORPSE, -1, -1, (uint8_t)(s_rng.next() & 0x3F));
             Container& c = G.world.containers[id];
             c.searchTime = 0.9f;
             for (const Item& it : chunk) addToSlots(c.items, it);
@@ -1532,6 +1652,8 @@ void updatePlayer(float dt) {
         pl.stamina = std::min(p.maxStamina(), pl.stamina + (16 + p.up[UP_ENDURANCE] * 4) * dt);
     }
     if (p.armor.id == IT_VEST_HEAVY) speed *= 0.92f;
+    pl.actT += dt;
+    pl.meleeCd -= dt;
     // Local co-op: nobody walks off the shared screen (Local::leash is a no-op otherwise).
     if (pl.moving) pl.pos = Local::leash(pl.pos, G.world.move(pl.pos, normalize(in) * speed * dt, PLAYER_R));
 
@@ -1562,7 +1684,21 @@ void updatePlayer(float dt) {
     if (Input::pressed(GLFW_KEY_Q)) switchWeapon(1 - p.curWeapon);
     if (!panelBlocks && Input::scroll() != 0 && !interactListActive()) switchWeapon(1 - p.curWeapon);
     if (Input::pressed(GLFW_KEY_R)) tryReload();
-    if (Input::pressed(GLFW_KEY_L) && !p.weapons[p.curWeapon].empty()) {
+    // A controller's R3 does two things (0.12v): tap it to hit, hold it for the laser.
+    bool laserPress = !Input::usingPad() && Input::pressed(GLFW_KEY_L), meleePress = !Input::usingPad() && Input::pressed(GLFW_KEY_F);
+    if (Input::usingPad()) {
+        Player& me = G.player;
+        if (Input::down(GLFW_KEY_L)) {
+            if (me.padR3T < 0) { me.padR3T = 0; me.padR3Held = false; }
+            me.padR3T += dt;
+            if (me.padR3T >= 0.4f && !me.padR3Held) { me.padR3Held = true; laserPress = true; }
+        } else {
+            if (me.padR3T >= 0 && !me.padR3Held) meleePress = true;
+            me.padR3T = -1;
+        }
+    }
+    if (meleePress && !panelBlocks) melee();
+    if (laserPress && !p.weapons[p.curWeapon].empty()) {
         // Each gun keeps its own switch, if the crafter fitted it a laser.
         if (p.weapons[p.curWeapon].flags & ITEMF_LASER) {
             p.weapons[p.curWeapon].flags ^= ITEMF_LASER_OFF;
@@ -2355,6 +2491,55 @@ void updateZombie(size_t index, float dt) {
         return;
     }
 
+    // ---- the axe zombie (0.12v): throws its axe at someone it can see a little way
+    // off, then goes and takes it back up if it lies close enough; bare-handed it hits
+    // for less.
+    if (e.zkind == 2) {
+        e.axeCd -= dt;
+        if (e.takeT >= 0) {
+            e.takeT -= dt;
+            if (e.takeT < 0) { e.noAxe = false; e.axeCd = s_rng.range(5, 9); }
+            return;
+        }
+        if (!e.noAxe && e.axeCd <= 0) {
+            e.axeCd = 0.5f;
+            for (const Target& t : s_targets) {
+                float d = dist(e.pos, t.pos);
+                if (d < 48 || d > 125 || !G.world.lineOfSight(e.pos, t.pos)) continue;
+                FlyingAxe a;
+                a.pos = e.pos + Vec2(0, -4);
+                Vec2 aimAt = t.pos + (t.pos - e.pos) * 0.0f;
+                a.vel = normalize(aimAt - e.pos) * 190.0f;
+                a.flight = d / 190.0f;
+                a.dir = (int)Art::dirFromAngle(angleOf(a.vel));
+                a.owner = e.netId;
+                a.dmg = dmg * 1.3f;
+                s_axes.push_back(a);
+                e.noAxe = true;
+                e.angle = angleOf(a.vel);
+                e.meleeCd = zk.attackCd;   // the throw is its swing
+                sfxAt(Snd::toss, e.pos, pl.pos, 0.6f, 0.8f);
+                return;
+            }
+        }
+        if (e.noAxe) {
+            dmg *= 0.6f;
+            // Its axe, lying close: go and pick it up.
+            for (size_t i = 0; i < s_axes.size(); i++) {
+                FlyingAxe& a = s_axes[i];
+                if (a.owner != e.netId || a.stage < 2) continue;
+                float d = dist(a.pos, e.pos);
+                if (d < 9) { e.takeT = 0.8f; s_axes.erase(s_axes.begin() + i); return; }
+                if (d < 110 && nearestTargetDist(e.pos) > 36) {
+                    Vec2 dir = normalize(a.pos - e.pos);
+                    e.pos = G.world.move(e.pos, (dir + separation(e, index) * 0.5f) * speed * dt, ENEMY_R);
+                    turnToward(e.angle, angleOf(dir), 6, dt);
+                    return;
+                }
+            }
+        }
+    }
+
     // ---- choose what to go for
     e.retargetT -= dt;
     if (e.retargetT <= 0) {
@@ -2599,7 +2784,7 @@ void damageHireling(Hireling& h, float dmg) {
     h.hp = 0;
     h.dead = true;
     // Gone for good. What they carried is on the body for whoever finds it.
-    int id = G.world.addContainer(h.pos, CK_CORPSE, -1, -1, (uint8_t)(s_rng.next() & 0x7F));
+    int id = G.world.addContainer(h.pos, CK_CORPSE, -1, -1, (uint8_t)((s_rng.next() & 0x3F) | (hireTier(h.tier).helmet ? 0x40 : 0)));
     Container& c = G.world.containers[id];
     c.searchTime = 0.9f;
     const HireTier& ht = hireTier(h.tier);
@@ -2803,10 +2988,26 @@ void updateHireling(int index, float dt) {
         if (h.target < 0) turnToward(h.angle, angleOf(move), 6, dt);
     }
 
+    h.meleeT += dt;
     if (h.target < 0 || !wd) return;
-    const Enemy& e = G.enemies[h.target];
+    Enemy& e = G.enemies[h.target];
     float want = angleOf(e.pos - h.pos);
     turnToward(h.angle, want, 8, dt);
+    // One of the dead right on top of them (0.12v): a punch to shove it off, then shoot.
+    if (e.type == EnemyType::Zombie && !e.dead && dist(e.pos, h.pos) < 15 && h.meleeT > 0.8f) {
+        h.meleeT = 0;
+        Vec2 f = normalize(e.pos - h.pos);
+        sfxAt(Snd::melee, h.pos, pl.pos, 0.4f, 1.1f);
+        s_dmgOwner = 10 + h.owner;
+        damageEnemy(e, 12.0f * ht.damageMul, f);
+        s_dmgOwner = -1;
+        if (!e.dead) {
+            e.pos = G.world.move(e.pos, f * (e.zkind == 1 ? 3.0f : 8.0f), ENEMY_R);
+            e.meleeCd = std::max(e.meleeCd, 0.4f);
+        }
+        return;
+    }
+    if (h.meleeT < 0.3f) return;
     if (h.mag <= 0) {
         if (h.reloadT <= 0) { h.reloadT = wd->reloadTime * 1.2f; sfxAt(Snd::reload, h.pos, pl.pos, 0.3f); }
         return;
@@ -3797,6 +3998,7 @@ void updateGrenades(float dt) {
 
 void updateEffects(float dt) {
     updateBloodDrops(dt);
+    updateCasings(dt);
     for (BloodFx& b : s_bloodFx) b.t += dt;
     s_bloodFx.erase(std::remove_if(s_bloodFx.begin(), s_bloodFx.end(), [](const BloodFx& b) { return b.t > 0.3f; }), s_bloodFx.end());
     // Teammates getting hurt bleed on everyone's screen too.
@@ -3899,6 +4101,9 @@ void raid_devBotShoot() {
         if (!e.dead && dist(e.pos, G.player.pos) < bd) { bd = dist(e.pos, G.player.pos); best = &e; }
     if (!best) return;
     G.player.angle = angleOf(best->pos - G.player.pos);
+    if (bd < 24) { melee(); return; }   // close enough to hit
+    G.player.act = 1;
+    G.player.actT = 0;
     if (w.data <= 0) w.data = wd->magSize;
     s_shotOwner = mySlot();
     spawnBullets(G.player.pos + fromAngle(G.player.angle) * 9, G.player.angle, *wd, w.id, 0.5f, 0, true, 1.0f);
@@ -3906,6 +4111,8 @@ void raid_devBotShoot() {
     w.data--;
     G.player.fireCd = 1.0f / wd->fireRate;
     G.player.flashT = 0.09f;
+    G.player.act = 1;
+    G.player.actT = 0;
 }
 
 // Dev: a few zombies of each kind at the edge of the screen, walking in.
@@ -4016,6 +4223,8 @@ static void beginRaid(bool resume) {
     G.world.generate(seed, p.day);
     placeTurretsInWorld(G.world);
     s_gateT.clear();
+    s_axes.clear();
+    s_casings.clear();
     G.enemies.clear();
     G.bullets.clear();
     G.grenades.clear();
@@ -4217,6 +4426,36 @@ void raid_saveState() {
 namespace {
 // Everything in the world that is not a player: the host (and solo) runs this; a
 // guest only mirrors it.
+// Thrown axes (0.12v): fly to where their target stood, hurt whoever is there, stick
+// in the ground (or a wall) and lie there until taken back up or the day moves on.
+void updateAxes(float dt) {
+    for (size_t i = 0; i < s_axes.size();) {
+        FlyingAxe& a = s_axes[i];
+        a.t += dt;
+        if (a.stage == 0) {
+            Vec2 next = a.pos + a.vel * dt;
+            bool wall = G.world.blocksMove(World::toTile(next.x), World::toTile(next.y + 4));
+            if (!wall) a.pos = next;
+            if (wall || a.t >= a.flight) {
+                a.stage = 1;
+                a.t = 0;
+                for (const Target& t : s_targets)
+                    if (dist(t.pos, a.pos + Vec2(0, 4)) < 11) { hurtSlot(t.slot, a.dmg, "Cut down by a thrown axe."); break; }
+                for (Hireling* h : s_mercs)
+                    if (!h->dead && dist(h->pos, a.pos + Vec2(0, 4)) < 11) { damageHireling(*h, a.dmg); break; }
+                sfxAt(Snd::tile_hit, a.pos, G.player.pos, 0.5f, 0.7f);
+            }
+        } else if (a.stage == 1 && a.t > 0.35f) {
+            a.stage = 2;
+            a.t = 0;
+        } else if (a.stage == 2 && a.t > 40) {
+            s_axes.erase(s_axes.begin() + i);
+            continue;
+        }
+        i++;
+    }
+}
+
 // Everyone else's feet in the puddles (0.12v).
 void othersSplash() {
     if (localCrypt() >= 0) return;
@@ -4241,6 +4480,7 @@ void worldSim(float dt) {
     for (Barricade& b : G.prof.barricades) b.hurtT -= dt;
     updateGates(dt);
     othersSplash();
+    updateAxes(dt);
     updateSquad(dt);
     buryHirelings();
     // Nobody stands inside a car that drove into them.
@@ -4497,6 +4737,8 @@ static bool playerActions(float dt, bool paused, bool worldCars) {
             G.lootContainer = cidx;
             G.searchT = 0;
             G.panel = Panel::Loot;
+            G.player.act = 3;   // bends down to it (the pick-up animation)
+            G.player.actT = 0;
             if (!G.world.containers[cidx].searched) sfx(Snd::search, 0.6f);
         } else if (inter == Interact::Door) {
             int state = doorStateNear(G.player.pos, INTERACT_RANGE);
@@ -4805,22 +5047,50 @@ float gunLength(int id) {
 }
 
 // Animated character art from the pack, falling back to the built-in sprite.
+// `act` (0.12v): 1 a shot just fired (the gun's recoil, then a shotgun's pump), 2 a
+// punch or a swing of the bat, 3 bending down to pick something up; `actT` seconds
+// since it began. `bat`: a bat is carried (swung in a punch, held when no gun is).
 void drawCharacter(int fallbackSprite, Vec2 pos, float angle, int weapon, bool hurt, bool moving,
                    float animTime, bool reloading, bool helmet, float scale = 1, Color bodyTint = Color(), bool enemy = false,
-                   int shirt = 0) {
+                   int shirt = 0, int act = 0, float actT = 9, bool bat = false) {
     Color tint = hurt ? Color(1.0f, 0.55f, 0.55f) : bodyTint;
     Art::Dir dir = Art::dirFromAngle(angle);
     Vec2 base = pos + Vec2(0, 8 * scale);
     Art::Anim bodyAnim = moving ? Art::Anim::Run : Art::Anim::Idle;
     int bodyFrame = (int)(animTime * (moving ? 12.0f : 6.0f));
-    Art::Piece body = Art::humanBody(dir, bodyAnim, bodyFrame, weapon != IT_NONE, enemy, shirt);
+    bool punching = act == 2 && actT < (bat ? 0.45f : 0.3f);
+    bool picking = act == 3 && actT < 0.5f;
+    bool swinging = punching && bat;
+    bool handsFree = weapon == IT_NONE || picking || punching;
+    Art::Anim helmetAnim = Art::Anim::Idle;
+    Art::Piece body;
+    if (picking) {
+        body = Art::humanBody(dir, Art::Anim::PickUp, (int)(std::min(actT, 0.3f) * 16.0f), false, enemy, shirt);
+        helmetAnim = Art::Anim::PickUp;
+    } else if (punching && !bat) {
+        body = Art::humanBody(dir, Art::Anim::Punch, (int)(actT * 20.0f), false, enemy, shirt);
+        helmetAnim = Art::Anim::Punch;
+    }
+    if (!body.valid()) body = Art::humanBody(dir, bodyAnim, bodyFrame, !handsFree || swinging || (bat && weapon == IT_NONE), enemy, shirt);
     if (!body.valid()) {
         sceneAddSprite(fallbackSprite, pos, tint, 0, scale);
         return;
     }
     Art::Anim gunAnim = reloading ? Art::Anim::Reload : Art::Anim::Idle;
     int gunFrame = reloading ? (int)(animTime * 8.0f) : bodyFrame;
-    Art::Piece gun = Art::humanGun(dir, gunAnim, gunFrame, weapon);
+    if (!reloading && act == 1) {
+        // The kick of the shot, then a shotgun racks the next shell in.
+        bool shotgun = baseWeapon(weapon) == IT_SHOTGUN;
+        if (actT < 0.12f) { gunAnim = Art::Anim::Shoot; gunFrame = (int)(actT * 40.0f); }
+        else if (shotgun && actT < 0.55f) { gunAnim = Art::Anim::Rack; gunFrame = (int)((actT - 0.12f) * 16.0f); }
+    }
+    Art::Piece gun = handsFree ? Art::Piece() : Art::humanGun(dir, gunAnim, gunFrame, weapon);
+    if (gun.valid() && (gunAnim == Art::Anim::Shoot || gunAnim == Art::Anim::Rack))
+        gun.frame = std::min(gun.frame, gun.sprite->frameCount() - 1);
+    // The bat takes the gun's place: swung, or carried when there is no gun.
+    if (bat && (swinging || weapon == IT_NONE) && !picking) {
+        gun = Art::bat(dir, swinging ? Art::Anim::Attack : Art::Anim::Idle, swinging ? (int)(actT * 18.0f) : bodyFrame);
+    }
     // Elite guns are gilded, so you can tell one across the street.
     Color gunTint = tint;
     if (itemDef(weapon).elite) {
@@ -4835,7 +5105,7 @@ void drawCharacter(int fallbackSprite, Vec2 pos, float angle, int weapon, bool h
     sceneAdd(body, base, tint, scale);
     if (gun.valid() && !gunBehind) sceneAddCentered(gun, gunPos, gunTint, scale, 0.02f);
     if (helmet) {
-        Art::Piece h = Art::helmet(dir, bodyFrame);
+        Art::Piece h = Art::helmet(dir, helmetAnim == Art::Anim::Idle ? bodyFrame : (int)(actT * (picking ? 16.0f : 20.0f)), helmetAnim);
         if (h.valid()) sceneAdd(h, base + Vec2(0, -9 * scale), tint, scale, 0.03f);
     }
 }
@@ -5229,9 +5499,14 @@ void drawZombie(const Enemy& e, float animTime) {
     Color tint = e.hurtT > 0 ? Color(1.0f, 0.55f, 0.55f) : Color();
     Art::Dir dir = Art::dirFromAngle(e.angle);
     bool attacking = e.meleeCd > 0.35f;
-    Art::Anim anim = attacking ? Art::Anim::Attack : Art::Anim::Walk;
+    bool moving = lengthSq(e.pos - e.lastPos) > 0.01f;
+    // Standing still they sway on their idle; each swing picks one of the pack's two.
+    Art::Anim anim = attacking ? Art::Anim::Attack : moving ? Art::Anim::Walk : Art::Anim::Idle;
     int kind = e.artVariant % 3;
-    Art::Piece z = Art::zombie(kind, dir, anim, (int)(animTime * 9.0f));
+    bool alt = ((e.netId + (uint32_t)(G.realTime / 1.3f)) & 1) != 0;
+    int frame = (int)(animTime * 9.0f);
+    if (e.takeT >= 0) { anim = Art::Anim::PickUp; frame = (int)((0.8f - e.takeT) * 10.0f); }
+    Art::Piece z = Art::zombie(kind, dir, anim, frame, alt, e.noAxe);
     Vec2 base = e.pos + Vec2(0, 8);
     if (z.valid()) sceneAdd(z, base, tint, kind == 1 ? 1.15f : 1.0f);
     else sceneAddSprite(SHADE, e.pos, tint);
@@ -5843,6 +6118,8 @@ void drawLootPanel() {
                 if (!c.items[i].empty()) full = true;
             }
             sfx(Snd::pickup, 0.6f);
+            G.player.act = 3;
+            G.player.actT = 0;
             if (full) pushMessage(T("Inventory full"), P_CORAL);
         }
     }
@@ -6366,10 +6643,22 @@ void raid_draw() {
     if (localCrypt() < 0) Atmo::drawGround(G.world, cam);
     drawBloodPools();
     for (const ZombieCorpse& c : s_zCorpses) {
-        Art::Piece body = Art::zombieDeath(c.kind, c.left, (int)(c.t * 10.0f));
+        Art::Piece body = Art::zombieDeath(c.kind, c.left, (int)(c.t * 10.0f), c.fall, c.noAxe);
         if (!body.valid()) continue;
         float a = clampf((30.0f - c.t) / 6.0f, 0, 1);
         R::spriteAt(*body.sprite, body.frame, c.pos + Vec2(0, 7), R::Pivot::Bottom, 1, Color(1, 1, 1, a), body.flipX);
+    }
+    drawCasings();
+    for (const FlyingAxe& a : s_axes) {
+        if (a.stage == 0) {
+            // Spinning through the air, in an arc.
+            float h = std::sin(clampf(a.t / std::max(0.05f, a.flight), 0, 1) * PI) * 10.0f;
+            Art::Piece ap = Art::thrownAxe((Art::Dir)a.dir, 0, (int)(a.t * 16.0f));
+            if (ap.valid()) R::spriteAt(*ap.sprite, ap.frame, a.pos + Vec2(0, -h), R::Pivot::Center, 1, Color(), ap.flipX);
+        } else {
+            Art::Piece ap = Art::thrownAxe((Art::Dir)a.dir, a.stage, a.stage == 1 ? (int)(a.t * 20.0f) : 99);
+            if (ap.valid()) R::spriteAt(*ap.sprite, ap.frame, a.pos + Vec2(0, 6), R::Pivot::Bottom, 1, Color(), ap.flipX);
+        }
     }
     // Sealed while a horde is on or the night has fallen (0.11v): the lid comes down,
     // two steel bars are dropped across it and its lamp turns red.
@@ -6407,7 +6696,8 @@ void raid_draw() {
             bool moving = lengthSq(e.pos - e.lastPos) > 0.02f;
             bool helmet = e.type == EnemyType::Heavy || e.type == EnemyType::Sniper || e.type == EnemyType::Bandit;
             drawCharacter(ENEMY_DEFS[(int)e.type].sprite, e.pos, e.angle, e.weapon, e.hurtT > 0, moving, animTime,
-                          e.reloadT > 0, helmet, e.type == EnemyType::Heavy ? 1.15f : 1.0f, Color(), true);
+                          e.reloadT > 0, helmet, e.type == EnemyType::Heavy ? 1.15f : 1.0f, Color(), true, 0,
+                          e.flashT > 0 ? 1 : 0, 0.09f - e.flashT);
         }
     }
     if (isGuest()) {
@@ -6423,7 +6713,8 @@ void raid_draw() {
             if (h.dead || !onScreen(h.pos) || h.rideCar >= 0) continue;
             const HireTier& ht = hireTier(h.tier);
             drawCharacter(PLAYER, h.pos, h.angle, ht.weapon, h.hurtT > 0, lengthSq(h.pos - h.lastPos) > 0.01f,
-                          G.realTime + h.tier * 0.31f, h.reloadT > 0, ht.helmet);
+                          G.realTime + h.tier * 0.31f, h.reloadT > 0, ht.helmet, 1, Color(), false, 0,
+                          h.meleeT < 0.4f ? 2 : h.flashT > 0 ? 1 : 0, h.meleeT < 0.4f ? h.meleeT : 0.09f - h.flashT);
         }
     }
     drawNetPlayers(Coop::W_RAID);
@@ -6436,7 +6727,9 @@ void raid_draw() {
     } else if (s_deathT < 0) {
         if (s_ride < 0)   // in a car you are inside it, out of sight
             drawCharacter(PLAYER, G.player.pos, G.player.angle, p.weapons[p.curWeapon].id, G.player.hurtT > 0,
-                          G.player.moving, G.realTime, G.player.reloadT > 0, false, 1, Color(), false, p.shirt);
+                          G.player.moving, G.realTime, G.player.reloadT > 0, false, 1, Color(), false, p.shirt, G.player.act,
+                          // Looting: stays bent over the container while it is open.
+                          G.panel == Panel::Loot && G.player.act == 3 ? std::min(G.player.actT, 0.3f) : G.player.actT, carryingBat());
     } else {
         Art::Dir d = Art::dirFromAngle(G.player.angle);
         Art::Piece dead = Art::humanBody(d, Art::Anim::Death, (int)((3.0f - s_deathT) * 8.0f), false, false, p.shirt);
@@ -7030,7 +7323,7 @@ void sendSnapshot(int slot) {
         if (lengthSq(e.pos - at) > NET_RANGE * NET_RANGE && (e.type != EnemyType::Zombie || e.roamer)) continue;
         m.u32(e.netId);
         m.u8((uint8_t)e.type);
-        m.u8(e.type == EnemyType::Zombie ? (uint8_t)(e.zkind | (e.roamer ? 0x80 : 0)) : e.artVariant);
+        m.u8(e.type == EnemyType::Zombie ? (uint8_t)(e.zkind | (e.roamer ? 0x80 : 0) | (e.noAxe ? 0x40 : 0) | (e.takeT >= 0 ? 0x20 : 0)) : e.artVariant);
         uint8_t f = (e.hurtT > 0 ? 1 : 0) | (e.flashT > 0 ? 2 : 0) | (e.reloadT > 0 ? 4 : 0) |
                     (e.state == AIState::Alert ? 8 : 0) | (e.meleeCd > 0.35f ? 16 : 0);
         m.u8(f);
@@ -7088,7 +7381,12 @@ void readSnapshot(Net::Reader& r) {
         bool fresh = e.netId != id;
         e.netId = id;
         e.type = type;
-        if (type == EnemyType::Zombie) { e.zkind = variant & 3; e.artVariant = (uint8_t)(variant & 3); e.roamer = (variant & 0x80) != 0; }
+        if (type == EnemyType::Zombie) {
+            e.zkind = variant & 3; e.artVariant = (uint8_t)(variant & 3); e.roamer = (variant & 0x80) != 0;
+            e.noAxe = (variant & 0x40) != 0;
+            if ((variant & 0x20) && e.takeT < 0) e.takeT = 0.8f;
+            if (!(variant & 0x20)) e.takeT = -1;
+        }
         else e.artVariant = variant;
         e.home = pos;
         if (fresh) e.pos = e.lastPos = pos;
@@ -7342,6 +7640,8 @@ std::string raid_coopOffscreenHorde() {
         G.world.generate(seed, p.day);
         placeTurretsInWorld(G.world);
     s_gateT.clear();
+    s_axes.clear();
+    s_casings.clear();
         G.enemies.clear();
         G.bullets.clear();
         s_worldLive = false;
@@ -7592,7 +7892,7 @@ void raid_netMessage(int slot, uint8_t type, Net::Reader& r) {
         spawnBloodPool(pos);
         if (t == EnemyType::Zombie) {
             if (s_zCorpses.size() > 160) s_zCorpses.erase(s_zCorpses.begin());
-            s_zCorpses.push_back({pos, std::clamp(zkind, 0, 2), std::cos(angle) < 0, 0});
+            s_zCorpses.push_back({pos, std::clamp(zkind, 0, 2), std::cos(angle) < 0, 0, (int)(s_rng.next() & 1), false});
         }
         break;
     }
@@ -7819,6 +8119,8 @@ std::string raid_missedHorde() {
     G.world.generate(todaySeed(), p.day);
     placeTurretsInWorld(G.world);
     s_gateT.clear();
+    s_axes.clear();
+    s_casings.clear();
     G.enemies.clear();
     G.bullets.clear();
     G.nightFallen = false;

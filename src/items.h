@@ -14,6 +14,8 @@ enum ItemId : int {
     IT_REVOLVER, IT_CARBINE,
     // Elite guns: better versions of the ones above, never sold, only found.
     IT_M92, IT_LUGER, IT_MAGNUM, IT_MP5, IT_M15, IT_AK47, IT_M24,
+    // 0.12v
+    IT_BAT, IT_SOUP,
     IT_COUNT
 };
 

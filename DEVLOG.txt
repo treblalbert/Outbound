@@ -192,6 +192,20 @@ OUTBOUND - DEVLOG (0.11v)
 
 
 
+·HANDS, BATS AND AXES
+
+- Melee: F (tap R3 on a controller) punches whatever is right in front of you, with the pack's punch animation. Carry a Baseball Bat anywhere in your pockets and you swing that instead: more damage, more reach, a harder knock-back. The trader sells bats for $90, and they turn up in the world. Holding R3 still toggles the laser.
+- Mercenaries punch a zombie off when it gets right on top of them, then go back to shooting.
+- The axe zombie throws its axe at anyone 50 to 125 pixels away. It spins through the air, hurts whoever it lands on and sticks in the ground. The zombie fights bare-handed, hitting for less, until it walks over and picks the axe back up.
+- The dead use all of the pack's animations: a second attack swing, swaying on their idle when they stand still, and both deaths (a stagger and fall, and the bloody one).
+- People fall three different ways, and a helmet rolls off the ones who wore one.
+- Guns kick with their shoot animation, and the shotgun pumps after every shot.
+- Spent casings fly out of the side of every gun, bounce, and lie on the ground for a while: small ones for pistols and SMGs, long ones for rifles, red shells from a shotgun.
+- You bend down (the pick-up animation) to search a container and to take everything.
+- Canned Soup is a new trade good. Big stacks of ammo show as the pack's ammo crates instead of boxes.
+
+
+
 ·THE PACK'S OWN INTERFACE
 
 - Every panel, button, item cell, slider and tooltip is now drawn with the art pack's UI sheets instead of flat boxes: the inventory frame for panels, the beige menu button (pressed in while you point at it), the inventory cell and its "chosen" frame, the menu scroll bar for sliders.

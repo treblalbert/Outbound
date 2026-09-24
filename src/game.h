@@ -147,6 +147,7 @@ struct Hireling {
     // Runtime only.
     Vec2 pos, lastPos, post;
     float angle = 0, fireCd = 0, reloadT = 0, hurtT = 0, flashT = 0, retargetT = 0, stuckT = 0, unstickT = 0;
+    float meleeT = 9;            // 0.12v: since their last punch (the dead too close to shoot)
     Vec2 unstickDir;
     int mag = 0;
     int target = -1;
@@ -368,6 +369,13 @@ struct Player {
     float bleedT = 0;          // seconds of bleeding left, 0 = not bleeding
     float bleedImmuneT = 0;    // a fresh dressing holds for a while
     float bleedDripT = 0;
+    // 0.12v: what the body is doing besides running and shooting (Art::Anim Punch,
+    // PickUp; Shoot for the gun's own recoil), and for how long.
+    int act = 0;               // 0 none, 1 shoot, 2 punch/swing, 3 pick up
+    float actT = 9;
+    float meleeCd = 0;
+    float padR3T = -1;         // a controller's R3: tap to hit, hold for the laser
+    bool padR3Held = false;
 };
 
 constexpr float BLEED_CHANCE = 0.07f;      // per bullet that hits you (half with armor on)
@@ -406,6 +414,9 @@ struct Enemy {
     // looks further, so it finds them and answers.
     float provokedT = 0;
     int patrol = -1;           // a city gang on patrol (World::patrols), -1 none
+    // 0.12v: the axe zombie throws its axe, fights bare-handed, and takes it back up.
+    bool noAxe = false;
+    float axeCd = 3, takeT = -1;
 };
 
 struct Bullet {

@@ -313,7 +313,7 @@ static const Bindable BINDABLES[] = {
     {GLFW_KEY_1, "Weapon 1"}, {GLFW_KEY_2, "Weapon 2"}, {GLFW_KEY_Q, "Switch weapon"},
     {GLFW_KEY_G, "Throw grenade"}, {GLFW_KEY_H, "Quick heal"}, {GLFW_KEY_TAB, "Inventory"},
     {GLFW_KEY_M, "Map"}, {GLFW_KEY_L, "Toggle laser"}, {GLFW_KEY_V, "Push to talk"},
-    {GLFW_KEY_SPACE, "Handbrake"},
+    {GLFW_KEY_SPACE, "Handbrake"}, {GLFW_KEY_F, "Melee (punch / bat)"},
 };
 const Bindable* bindables(int& count) { count = (int)(sizeof(BINDABLES) / sizeof(BINDABLES[0])); return BINDABLES; }
 

@@ -26,7 +26,7 @@ bool slider(float x, float y, float w, float h, float& value);  // draggable 0..
 // elsewhere or press Enter); `focused` is the caller's. Returns true when it changed.
 bool textField(float x, float y, float w, float h, std::string& text, bool& focused, int maxLen);
 // Draws an item icon centred in a box, preferring the art pack over the built-in art.
-void itemIcon(int itemId, float x, float y, float box, Color tint = Color());
+void itemIcon(int itemId, float x, float y, float box, Color tint = Color(), int count = 0);
 
 // ---- the art pack's UI skin (0.12v)
 const Assets::Sprite* skin(const char* key);   // "ui/<key>", or nullptr

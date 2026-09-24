@@ -35,6 +35,7 @@ std::vector<const Sprite*> g_buildingWalls;
 const Sprite* g_wallWood = nullptr;
 const Sprite* g_wallMetal = nullptr;
 const Sprite* g_itemIcons[IT_COUNT] = {};
+const Sprite* g_itemCrates[IT_COUNT] = {};
 bool g_packLoaded = false;
 
 const char* DIR_NAME[4] = {"down", "up", "side", "side-left"};
@@ -55,6 +56,19 @@ const Sprite* g_helmet[4];
 const Sprite* g_fire[4];
 const Sprite* g_zombie[3][4][3];  // [kind][dir][anim: idle/walk/attack]
 const Sprite* g_zombieDeath[3][2];  // [kind][0 side, 1 side-left]
+// 0.12v: the rest of the character pack. Sets: 0 you, 1 raiders, 2.. the shirts.
+constexpr int HUMAN_SETS = Assets::SHIRT_COUNT + 1;
+const Sprite* g_humanPunch[HUMAN_SETS][4][2];
+const Sprite* g_humanPick[HUMAN_SETS][4][2];
+const Sprite* g_humanFall[HUMAN_SETS][4][3];   // death1..3 (side sheets)
+const Sprite* g_gunRack[4];                     // the shotgun's pump after a shot
+const Sprite* g_helmetAnim[4][3];               // punch, pick-up, death
+const Sprite* g_bat[4][2];                      // idle-and-run, attack
+const Sprite* g_zombieAlt[3][4];                // second attack
+const Sprite* g_zombieFall[3][2][2];            // [kind][side][first/second death]
+const Sprite* g_axeless[4][4];                  // the axe zombie without it: [dir][idle/walk/attack/taking]
+const Sprite* g_axelessFall[2][2];
+const Sprite* g_axe[4][3];                      // [dir][thrown/landing/landed]
 
 void add(std::vector<const Sprite*>& v, const std::string& key) {
     if (const Sprite* s = Assets::find(key)) v.push_back(s);
@@ -124,7 +138,57 @@ void loadCharacters() {
         if (!g_shirtDeath[s][0]) g_shirtDeath[s][0] = g_shirtDeath[s][2];
         if (!g_shirtDeath[s][1]) g_shirtDeath[s][1] = g_shirtDeath[s][3];
     }
+    // Punch, pick-up and the three falls, for you, the raiders and every shirt.
+    for (int set = 0; set < HUMAN_SETS; set++) {
+        std::string k = set == 0 ? "character/main/" : set == 1 ? "character/main_enemy/" : "character/main_c" + std::to_string(set - 1) + "/";
+        for (int d = 0; d < 4; d++) {
+            std::string dir = DIR_NAME[d];
+            g_humanPunch[set][d][1] = Assets::find(k + "punch/character_" + dir + "_punch");
+            g_humanPunch[set][d][0] = Assets::find(k + "punch/character_" + dir + "_punch_no-hands");
+            g_humanPick[set][d][1] = Assets::find(k + "pick-up/character_" + dir + "_pick-up");
+            g_humanPick[set][d][0] = Assets::find(k + "pick-up/character_" + dir + "_pick-up_nohands");
+            for (int f = 0; f < 3; f++) g_humanFall[set][d][f] = Assets::find(k + "death/character_" + dir + "_death" + std::to_string(f + 1));
+        }
+        for (int f = 0; f < 3; f++) {   // side-on only: up and down fall as the sides do
+            if (!g_humanFall[set][0][f]) g_humanFall[set][0][f] = g_humanFall[set][2][f];
+            if (!g_humanFall[set][1][f]) g_humanFall[set][1][f] = g_humanFall[set][3][f];
+        }
+    }
+    for (int d = 0; d < 4; d++) {
+        std::string dir = DIR_NAME[d];
+        g_gunRack[d] = Assets::search({"character/guns/shotgun/", "_" + dir + "_", "racking"});
+        std::string hd = d <= 1 ? "up-and-down" : dir;
+        g_helmetAnim[d][0] = Assets::search({"character/helmet/helmet_" + hd, "punch"});
+        g_helmetAnim[d][1] = Assets::search({"character/helmet/helmet_" + hd, "pick-up"});
+        g_helmetAnim[d][2] = Assets::search({"character/helmet/helmet_" + (d == 3 ? std::string("side-left") : std::string("side")), "death"});
+        g_bat[d][0] = Assets::search({"character/bat/bat_" + (d == 3 ? std::string("side-left") : dir), "idle-and-run"});
+        g_bat[d][1] = Assets::search({"character/bat/bat_" + (d == 3 ? std::string("side-left") : dir), "attack"});
+        const char* ax[4] = {"idle", "first-attack", "first-attack", "taking-axe"};
+        for (int a = 0; a < 4; a++)
+            g_axeless[d][a] = Assets::search({"enemies/zombie_axe/no-axe/zombie_axe_no-axe_" + (d == 3 ? std::string("side-left") : dir) + "_", ax[a]});
+        std::string adir = d == 3 ? "side-left" : dir;
+        g_axe[d][0] = d <= 1 ? Assets::find("enemies/zombie_axe/axe/axe_vertical_thrown") : Assets::find("enemies/zombie_axe/axe/axe_" + adir + "_thrown");
+        g_axe[d][1] = Assets::find("enemies/zombie_axe/axe/axe_" + adir + "_landing");
+        g_axe[d][2] = Assets::find("enemies/zombie_axe/axe/axe_" + adir + "_landed");
+    }
+    // The empty-handed axe zombie has no walk: it lurches along on its idle.
+    for (int d = 0; d < 4; d++) {
+        if (!g_axeless[d][0]) g_axeless[d][0] = g_axeless[d == 1 ? 0 : 2][0];
+        if (!g_axeless[d][1]) g_axeless[d][1] = g_axeless[d][0];
+        if (!g_axeless[d][2]) g_axeless[d][2] = g_axeless[2][2] ? g_axeless[2][2] : g_axeless[d][0];
+        if (!g_axeless[d][3]) g_axeless[d][3] = g_axeless[d == 1 ? 0 : 2][3];
+    }
+    for (int sd = 0; sd < 2; sd++)
+        for (int f = 0; f < 2; f++)
+            g_axelessFall[sd][f] = Assets::search({"enemies/zombie_axe/no-axe/zombie_axe_no-axe", sd ? "_side-left_" : "_side_", f ? "second-death" : "first-death"});
     const char* zombieDir[3] = {"zombie_small", "zombie_big", "zombie_axe"};
+    for (int k = 0; k < 3; k++) {
+        std::string base = std::string("enemies/") + zombieDir[k] + "/";
+        for (int d = 0; d < 4; d++) g_zombieAlt[k][d] = Assets::search({base, std::string("_") + DIR_NAME[d] + "_", "second-attack"});
+        for (int sd = 0; sd < 2; sd++)
+            for (int f = 0; f < 2; f++)
+                g_zombieFall[k][sd][f] = Assets::search({base + zombieDir[k] + (sd ? "_side-left_" : "_side_"), f ? "second-death" : "first-death"});
+    }
     for (int k = 0; k < 3; k++) {
         std::string base = std::string("enemies/") + zombieDir[k] + "/";
         // Prefer the bloody second death; the axe zombie only has it without its axe.
@@ -447,6 +511,15 @@ void loadIcons() {
     set(IT_AMMO_SNIPER, "icon_bullet-crate_blue");
     set(IT_ROCKET, "icon_bullet-crate_red");
     set(IT_SCRAP, "icon_rock");
+    set(IT_BAT, "icon_bat");
+    set(IT_SOUP, "icon_canned-soup");
+    // A big pile of rounds shows as a crate rather than a box (0.12v).
+    auto crate = [&](int item, const char* key) {
+        if (const Sprite* s = Assets::find(std::string("ui/inventory/objects/") + key)) g_itemCrates[item] = s;
+    };
+    crate(IT_AMMO_LIGHT, "icon_bullet-crate_blue");
+    crate(IT_AMMO_SHELL, "icon_bullet-crate_red");
+    crate(IT_AMMO_RIFLE, "icon_bullet-crate_green");
 }
 
 }  // namespace
@@ -1006,7 +1079,12 @@ Piece containerArt(int kind, uint8_t variant) {
 // Bodies left by people are always the pack's human death art, lying on one side
 // or the other: the last frame of character_side(-left)_death1.
 Piece corpse(uint8_t variant) {
-    // Bit 0x80 marks a raider's body, drawn in their red.
+    // Bit 0x80 marks a raider's body, drawn in their red; bits 1-2 the fall.
+    int fall = (variant >> 1) & 3;
+    if (fall > 0 && fall < 3) {
+        const Sprite* f = g_humanFall[(variant & 0x80) ? 1 : 0][(variant & 1) ? 3 : 2][fall];
+        if (f) return piece(f, f->frameCount() - 1);
+    }
     const Sprite* s = (variant & 0x80) ? g_foeDeath[(variant & 1) ? 3 : 2] : nullptr;
     if (!s) s = g_bodyDeath[(variant & 1) ? 3 : 2];
     if (!s) s = g_bodyDeath[(variant & 1) ? 2 : 3];
@@ -1014,10 +1092,12 @@ Piece corpse(uint8_t variant) {
     return piece(s, s->frameCount() - 1);
 }
 
-Piece zombieDeath(int kind, bool left, int frame) {
+Piece zombieDeath(int kind, bool left, int frame, int fall, bool noAxe) {
     int k = std::clamp(kind, 0, 2);
-    const Sprite* s = g_zombieDeath[k][left ? 1 : 0];
+    // The pack draws two deaths: a stagger and fall (first) and the bloody one (second).
+    const Sprite* s = noAxe ? g_axelessFall[left ? 1 : 0][fall ? 1 : 0] : g_zombieFall[k][left ? 1 : 0][fall ? 1 : 0];
     bool flip = false;
+    if (!s) s = g_zombieDeath[k][left ? 1 : 0];
     if (!s) { s = g_zombieDeath[k][left ? 0 : 1]; flip = true; }
     if (!s) return Piece();
     return piece(s, std::clamp(frame, 0, s->frameCount() - 1), flip);
@@ -1030,10 +1110,22 @@ Piece furniture(int which) {
     return piece(Assets::find(keys[std::clamp(which, 0, n - 1)]));
 }
 
-Piece humanBody(Dir d, Anim a, int frame, bool holdingGun, bool enemy, int shirt) {
+Piece humanBody(Dir d, Anim a, int frame, bool holdingGun, bool enemy, int shirt, int fall) {
     int di = (int)d;
     int hands = holdingGun ? 0 : 1;
     const Sprite* s = nullptr;
+    int set = enemy ? 1 : (shirt > 0 && shirt < Assets::SHIRT_COUNT ? shirt + 1 : 0);
+    if (a == Anim::Punch || a == Anim::PickUp) {
+        s = a == Anim::Punch ? g_humanPunch[set][di][hands] : g_humanPick[set][di][hands];
+        if (!s) s = a == Anim::Punch ? g_humanPunch[0][di][hands] : g_humanPick[0][di][hands];
+        if (s) return piece(s, std::clamp(frame, 0, s->frameCount() - 1));
+        a = Anim::Idle;
+    }
+    if (a == Anim::Death && fall > 0) {
+        s = g_humanFall[set][di][fall % 3];
+        if (!s) s = g_humanFall[0][di][fall % 3];
+        if (s) return piece(s, std::clamp(frame, 0, s->frameCount() - 1));
+    }
     if (enemy) {
         if (a == Anim::Death) s = g_foeDeath[di];
         else if (a == Anim::Run) s = g_foeRun[di][hands];
@@ -1059,18 +1151,53 @@ Piece humanGun(Dir d, Anim a, int frame, int weaponItem) {
     if (weaponItem == IT_NONE) return Piece();
     int di = (int)d, wc = weaponClass(weaponItem);
     int ai = a == Anim::Shoot ? 1 : a == Anim::Reload ? 2 : 0;
-    const Sprite* s = g_gun[di][wc][ai];
+    const Sprite* s = a == Anim::Rack && wc == 2 ? g_gunRack[di] : g_gun[di][wc][ai];
+    if (a == Anim::Rack && !s) s = g_gun[di][wc][1];
     if (!s) s = g_gun[di][wc][0];
     if (!s) s = g_gun[di][0][0];
     return piece(s, frame);
 }
 
-Piece helmet(Dir d, int frame) { return piece(g_helmet[(int)d], frame); }
+Piece helmet(Dir d, int frame, Anim a) {
+    int di = (int)d;
+    const Sprite* s = a == Anim::Punch ? g_helmetAnim[di][0] : a == Anim::PickUp ? g_helmetAnim[di][1] : a == Anim::Death ? g_helmetAnim[di][2] : nullptr;
+    if (s) return piece(s, std::clamp(frame, 0, s->frameCount() - 1));
+    return piece(g_helmet[di], frame);
+}
 
-Piece zombie(int kind, Dir d, Anim a, int frame) {
+Piece helmetFall(bool left, int frame) {
+    const Sprite* s = g_helmetAnim[left ? 3 : 2][2];
+    if (!s) return Piece();
+    return piece(s, std::clamp(frame, 0, s->frameCount() - 1));
+}
+
+Piece bat(Dir d, Anim a, int frame) {
+    int di = (int)d;
+    const Sprite* s = g_bat[di][a == Anim::Attack ? 1 : 0];
+    if (!s) s = g_bat[di][0];
+    bool flip = false;
+    if (!s && d == Dir::Left) { s = g_bat[(int)Dir::Right][a == Anim::Attack ? 1 : 0]; flip = true; }
+    if (!s) return Piece();
+    return piece(s, a == Anim::Attack ? std::clamp(frame, 0, s->frameCount() - 1) : frame, flip);
+}
+
+Piece zombie(int kind, Dir d, Anim a, int frame, bool alt, bool noAxe) {
     int k = std::clamp(kind, 0, 2), di = (int)d;
+    if (k == 2 && noAxe) {
+        int ai = a == Anim::PickUp ? 3 : a == Anim::Attack ? 2 : (a == Anim::Walk || a == Anim::Run) ? 1 : 0;
+        if (const Sprite* s = g_axeless[di][ai]) return piece(s, ai == 3 ? std::clamp(frame, 0, s->frameCount() - 1) : frame);
+    }
+    if (a == Anim::Attack && alt && g_zombieAlt[k][di]) return piece(g_zombieAlt[k][di], frame);
     int ai = a == Anim::Attack ? 2 : (a == Anim::Walk || a == Anim::Run) ? 1 : 0;
     return piece(g_zombie[k][di][ai], frame);
+}
+
+Piece thrownAxe(Dir d, int stage, int frame) {
+    int di = (int)d;
+    const Sprite* s = g_axe[di][std::clamp(stage, 0, 2)];
+    if (!s) s = g_axe[2][std::clamp(stage, 0, 2)];
+    if (!s) return Piece();
+    return piece(s, stage == 0 ? frame : std::clamp(frame, 0, s->frameCount() - 1));
 }
 
 Piece muzzleFlash(Dir d, int frame) { return piece(g_fire[(int)d], frame); }
@@ -1082,8 +1209,9 @@ Piece bulletSprite(int weaponItem) {
     return piece(Assets::find(key));
 }
 
-const Assets::Sprite* itemIcon(int itemId) {
+const Assets::Sprite* itemIcon(int itemId, int count) {
     if (itemId <= IT_NONE || itemId >= IT_COUNT) return nullptr;
+    if (count > 0 && g_itemCrates[itemId] && count * 2 > itemDef(itemId).stack) return g_itemCrates[itemId];
     return g_itemIcons[itemId];
 }
 

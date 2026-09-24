@@ -960,7 +960,15 @@ void drawTileSolids(World& w, Vec2 cam, float timeSec) {
         bool empty = c.searched && std::all_of(c.items.begin(), c.items.end(), [](const Item& i) { return i.empty(); });
         Color ct = empty ? Color(0.65f, 0.65f, 0.7f) : Color();
         Art::Piece art = c.kind == CK_CORPSE ? Art::corpse(c.variant) : Art::containerArt(c.kind, c.variant);
-        if (art.valid()) { sceneAdd(art, c.pos + Vec2(0, 4), ct); sceneNoReflect(); }
+        if (art.valid()) {
+            sceneAdd(art, c.pos + Vec2(0, 4), ct);
+            sceneNoReflect();
+            // A helmet that rolled off as they fell (Character/Helmet death).
+            if (c.kind == CK_CORPSE && (c.variant & 0x40)) {
+                Art::Piece hm = Art::helmetFall((c.variant & 1) != 0, 99);
+                if (hm.valid()) { sceneAdd(hm, c.pos + Vec2(0, 4), ct, 1, 0.01f); sceneNoReflect(); }
+            }
+        }
         else sceneAddSprite(c.kind == CK_CORPSE ? C_CORPSE : C_BAG, c.pos, ct);
     }
 }

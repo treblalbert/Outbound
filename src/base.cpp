@@ -127,7 +127,7 @@ const ShopEntry SHOP[] = {
     {IT_PISTOL, 1, 200, 1},      {IT_REVOLVER, 1, 680, 2},    {IT_SMG, 1, 560, 1},         {IT_SHOTGUN, 1, 520, 1},
     {IT_CARBINE, 1, 920, 3},
     {IT_SNIPER, 1, 1600, 3},     {IT_LAUNCHER, 1, 2600, 5},   {IT_VEST_LIGHT, 1, 380, 1},  {IT_VEST_HEAVY, 1, 1100, 3},
-    {IT_PACK_SMALL, 1, 240, 1},  {IT_PACK_LARGE, 1, 720, 2},
+    {IT_PACK_SMALL, 1, 240, 1},  {IT_PACK_LARGE, 1, 720, 2},  {IT_BAT, 1, 90, 1},
 };
 constexpr int SHOP_COUNT = sizeof(SHOP) / sizeof(SHOP[0]);
 constexpr int SHOP_PER_PAGE = 9;
@@ -797,7 +797,7 @@ void panelStash(float W, float H) {
     if (UI::button(x + 66, y + sh - 22, 116, 12, T("Store valuables"), target != nullptr)) {
         int cap = p.invCapacity();
         for (int i = 0; i < cap; i++)
-            if (!p.inv[i].empty() && itemDef(p.inv[i].id).cat == Cat::Valuable) moveItem(p.inv, i, *target, targetSlots);
+            if (!p.inv[i].empty() && itemDef(p.inv[i].id).cat == Cat::Valuable && p.inv[i].id != IT_BAT) moveItem(p.inv, i, *target, targetSlots);
         Audio::play(Snd::pickup, 0.5f);
     }
     float sortW = 56, sortX = x + 6, sortY = y + sh - 22;
@@ -1244,7 +1244,7 @@ void panelTrader(float W, float H) {
 
     // Only what you carry: the stash is what you are keeping (0.11v). Gun parts are
     // never sold this way either, they are what the crafter works with.
-    auto sellable = [](const Item& it) { return !it.empty() && itemDef(it.id).cat == Cat::Valuable && it.id != IT_GUNPARTS; };
+    auto sellable = [](const Item& it) { return !it.empty() && itemDef(it.id).cat == Cat::Valuable && it.id != IT_GUNPARTS && it.id != IT_BAT; };
     int cap = p.invCapacity();
     // What today's contract still needs stays in your pockets (0.11v): as many as it asks
     // for, less what is already in the stash or your hands.

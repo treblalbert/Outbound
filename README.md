@@ -177,6 +177,17 @@ The **recruiter** hires up to three mercenaries. The more you pay, the better th
 gun, health and aim. Set each one to follow you outside or guard the compound. A
 hireling who dies is gone for good, and their gun is left on the body.
 
+## Fighting up close
+
+**F** (a tap of **R3** on a controller; holding R3 toggles the laser) hits whatever is
+right in front of you: a punch, or a swing of the **baseball bat** if you carry one in
+your pockets (the trader sells them, and they turn up in the world). It costs a little
+stamina, knocks the target back and puts it off its stroke. Mercenaries punch the dead
+off when they get too close to shoot.
+
+The axe zombies throw their axes at anyone a little way off, then fight bare-handed
+until they pick them back up.
+
 ## Weather and colour
 
 The sky changes on its own every couple of hours: clear, hazy, overcast, drizzle,

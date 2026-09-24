@@ -244,7 +244,7 @@ static void drawPadControls(float x, float y, float w) {
         {Prompt::Move, "Move"}, {Prompt::Aim, "Aim (with aim assist)"}, {Prompt::Shoot, "Shoot"}, {Prompt::Sprint, "Sprint"},
         {Prompt::Interact, "Interact / search / get in"}, {Prompt::Choose, "Pick what to interact with"}, {Prompt::Reload, "Reload"},
         {Prompt::Heal, "Quick heal"}, {Prompt::Grenade, "Throw grenade"}, {Prompt::Swap, "Switch weapon"},
-        {Prompt::Laser, "Toggle laser"}, {Prompt::Inventory, "Inventory"}, {Prompt::Map, "Map"}, {Prompt::Pause, "Pause"},
+        {Prompt::Laser, "Hit (tap) / laser (hold)"}, {Prompt::Inventory, "Inventory"}, {Prompt::Map, "Map"}, {Prompt::Pause, "Pause"},
     };
     static const Row DRIVE[] = {{Prompt::Accelerate, "Accelerate"}, {Prompt::Brake, "Brake / reverse"}, {Prompt::Steer, "Steer"}, {Prompt::Handbrake, "Handbrake"}};
     static const Row MENU[] = {{Prompt::Select, "Select"}, {Prompt::AltSelect, "Other action (drop, equip)"}, {Prompt::Grab, "Pick up an item to move it"},

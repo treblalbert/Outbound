@@ -48,6 +48,8 @@ static const ItemDef DEFS[IT_COUNT] = {
     {"M15", Cat::Weapon, 800, 1, I_CARBINE, 0, 3, "Precise semi-auto rifle, quick follow-up shots. 5.56.", true},
     {"AK-47", Cat::Weapon, 950, 1, I_RIFLE, 0, 3, "Heavy-hitting automatic rifle. 5.56.", true},
     {"M24", Cat::Weapon, 1400, 1, I_SNIPER, 0, 3, "Bolt-action marksman rifle. Pinpoint, devastating. .338.", true},
+    {"Baseball Bat", Cat::Valuable, 30, 1, I_SCRAP, 42, 1, "Carried in your pockets, it is what you hit with [F]: harder, further, and it knocks them back."},
+    {"Canned Soup", Cat::Valuable, 14, 10, I_FOOD, 0, 0, "Tomato, by the smell. Trade good."},
 };
 
 //                        ammo            dmg   rate  mag  reload spread pel speed range auto   expl   tile  shake sound
@@ -298,7 +300,7 @@ Item rollLoot(Rng& rng, float q, LootKind kind) {
         if (kind == LootKind::Toolbox) id = pickByRarity(rng, q, {IT_SCRAP, IT_WIRES, IT_BOLTS, IT_TAPE, IT_GUNPARTS, IT_BATTERY});
         else if (kind == LootKind::Military) id = pickByRarity(rng, q, {IT_BATTERY, IT_CIRCUIT, IT_GUNPARTS, IT_INTEL});
         else id = pickByRarity(rng, q, {IT_SCRAP, IT_WIRES, IT_BOLTS, IT_TAPE, IT_BATTERY, IT_CIRCUIT, IT_WATCH, IT_GPU,
-                                       IT_JEWELRY, IT_FOOD, IT_MEDSUP, IT_FUEL, IT_GUNPARTS, IT_INTEL});
+                                       IT_JEWELRY, IT_FOOD, IT_SOUP, IT_MEDSUP, IT_FUEL, IT_GUNPARTS, IT_INTEL, IT_BAT});
         break;
     case 1: id = pickByRarity(rng, q, {IT_BANDAGE, IT_MEDKIT}); break;
     case 2: id = pickByRarity(rng, q, {IT_AMMO_LIGHT, IT_AMMO_SHELL, IT_AMMO_RIFLE, IT_AMMO_SNIPER, IT_ROCKET}); break;

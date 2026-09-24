@@ -11,7 +11,7 @@ struct WorldProp;
 namespace Art {
 
 enum class Dir { Down, Up, Right, Left };
-enum class Anim { Idle, Run, Shoot, Reload, Death, Attack, Walk };
+enum class Anim { Idle, Run, Shoot, Reload, Death, Attack, Walk, Punch, PickUp, Rack };
 
 struct Piece {
     const Assets::Sprite* sprite = nullptr;
@@ -107,24 +107,36 @@ Piece stump();
 // The bunker hatch, lid up; `closed` = slammed shut and sealed (a horde, the night).
 Piece hatch(bool closed = false);
 Piece containerArt(int kind, uint8_t variant);
+// `variant`: bit 0 which side it lies on, bits 1-2 which of the three falls, 0x40 a
+// helmet on (it rolls off with the body), 0x80 a raider (their red).
 Piece corpse(uint8_t variant);
+Piece helmetFall(bool left, int frame);
 Piece furniture(int which);
 
 // ---- characters ----
 // Human raiders and the player share the pack's character art; `enemy` picks the
 // copy with the shirt dyed red.
 // `shirt` is the player's chosen colour (Assets::shirt), ignored for enemies.
-Piece humanBody(Dir d, Anim a, int frame, bool holdingGun, bool enemy = false, int shirt = 0);
+// Idle, Run, Punch and PickUp with or without hands (a gun's sheet draws them);
+// Death in one of three falls (`fall`).
+Piece humanBody(Dir d, Anim a, int frame, bool holdingGun, bool enemy = false, int shirt = 0, int fall = 0);
 Piece humanGun(Dir d, Anim a, int frame, int weaponItem);
-Piece helmet(Dir d, int frame);
-Piece zombie(int kind, Dir d, Anim a, int frame);
+Piece helmet(Dir d, int frame, Anim a = Anim::Idle);
+// The baseball bat (Character/Bat): carried (Idle/Run) or swung (Attack).
+Piece bat(Dir d, Anim a, int frame);
+// `alt` picks the second attack (the pack draws two swings) and, for the axe zombie,
+// its empty-handed sheets once it has thrown the axe (Idle/Walk/Attack/PickUp = taking it back).
+Piece zombie(int kind, Dir d, Anim a, int frame, bool alt = false, bool noAxe = false);
+// The axe zombie's axe in flight (0 thrown, 1 landing, 2 landed) facing `d`.
+Piece thrownAxe(Dir d, int stage, int frame);
 // A horde zombie going down; the frame clamps on the last, lying, one.
-Piece zombieDeath(int kind, bool left, int frame);
+Piece zombieDeath(int kind, bool left, int frame, int fall = 1, bool noAxe = false);
 Piece muzzleFlash(Dir d, int frame);
 Piece bulletSprite(int weaponItem);
 
 // ---- items & UI ----
-const Assets::Sprite* itemIcon(int itemId);
+// `count`: a big stack of rounds shows as a crate.
+const Assets::Sprite* itemIcon(int itemId, int count = 0);
 Piece uiPiece(const char* name);
 
 }  // namespace Art
