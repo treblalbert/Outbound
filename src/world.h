@@ -20,6 +20,10 @@ enum Solid : uint8_t {
     S_CRYPT_WALL, S_CRYPT_PROP, S_CRYPT_GATE,
     S_VOID,                    // 0.11v: the black round an upper floor
     S_STAIRS,                  // 0.11v: a flight of stairs (drawn by its PROP_STAIRS)
+    // 0.12v: the barricades you build round the hatch (variant = BarricadeType); their
+    // health lives on the Barricade, not the tile. Gates open for you and your people.
+    S_BARRICADE, S_GATE, S_GATE_OPEN,
+    S_FENCE_GATE, S_FENCE_GATE_OPEN,   // 0.12v: the compound fence's wire gates
     S_COUNT
 };
 

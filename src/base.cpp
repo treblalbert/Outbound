@@ -592,7 +592,7 @@ void panelBed(float W, float H) {
         }
         R::text(T2("{0}/{1} in bed", std::to_string(in), std::to_string(total)), x + 10, y + h - 38, pal(P_BEIGE));
         if (UI::button(x + 10, y + h - 24, 110, 16, Coop::localInBed() ? T("Get up") : T("Lie down"))) Coop::setInBed(!Coop::localInBed());
-        if (UI::button(x + w - 105, y + h - 24, 95, 16, T("Close"))) { Coop::setInBed(false); G.panel = Panel::None; }
+        if (UI::button(x + w - 105, y + h - 24, 95, 16, T("Close")) || UI::panelClose()) { Coop::setInBed(false); G.panel = Panel::None; }
         return;
     }
     if (hordeBeforeMorning()) {
@@ -808,7 +808,7 @@ void panelStash(float W, float H) {
         Audio::play(Snd::click, 0.5f, 1.2f);
         setNotice(T("Stash sorted."));
     }
-    if (UI::button(x + sw - 66, y + sh - 22, 60, 12, T("Close"))) G.panel = Panel::None;
+    if (UI::button(x + sw - 66, y + sh - 22, 60, 12, T("Close")) || UI::panelClose()) G.panel = Panel::None;
     drawInventoryPanel(x + sw + 8, y, InvMode::Stash, target, targetSlots);
 }
 
@@ -1114,12 +1114,13 @@ void panelExit(float W, float H) {
         else if (p.hp < p.maxHp() * 0.5f)
             R::text(T("Warning: you are badly hurt."), x + 10, y + 62, pal(P_CORAL));
     }
-    if (UI::button(x + 10, y + h - 24, 110, 16, T("Go outside"), !tooLate)) {
+    int yn = UI::yesNo(x + w - 33, y + 4);
+    if (UI::button(x + 10, y + h - 24, 110, 16, T("Go outside"), !tooLate) || (yn == 1 && !tooLate)) {
         G.panel = Panel::None;
         raid_start();
         return;
     }
-    if (UI::button(x + w - 120, y + h - 24, 110, 16, T("Stay"))) G.panel = Panel::None;
+    if (UI::button(x + w - 120, y + h - 24, 110, 16, T("Stay")) || yn == 2) G.panel = Panel::None;
 }
 
 // Looted goods go to the pockets first, then overflow into the stash, so the trader
@@ -1293,7 +1294,7 @@ void panelTrader(float W, float H) {
         setNotice(keeping ? T1("Sold valuables for ${0}. Kept what your contract needs.", std::to_string(valuables))
                           : T1("Sold valuables for ${0}.", std::to_string(valuables)));
     }
-    if (UI::button(x + lw - 62, by + 20, 56, 16, T("Close"))) G.panel = Panel::None;
+    if (UI::button(x + lw - 62, by + 20, 56, 16, T("Close")) || UI::panelClose()) G.panel = Panel::None;
     drawInventoryPanel(x + lw + 8, y, InvMode::Trader, nullptr, 0);
 }
 
@@ -1329,7 +1330,7 @@ void panelWorkbench(float W, float H) {
             }
         }
     }
-    if (UI::button(x + w / 2 - 40, y + h - 22, 80, 16, T("Close"))) G.panel = Panel::None;
+    if (UI::button(x + w / 2 - 40, y + h - 22, 80, 16, T("Close")) || UI::panelClose()) G.panel = Panel::None;
 }
 
 // Draws the goods a contract asks for as icons, each with how many you have.
@@ -1404,7 +1405,7 @@ void panelMission(float W, float H) {
             R::text(T("Contract complete. Sleep for new offers."), x + 10, y + 108, pal(P_YGREEN));
         }
     }
-    if (UI::button(x + w / 2 - 40, y + h - 22, 80, 16, T("Close"))) G.panel = Panel::None;
+    if (UI::button(x + w / 2 - 40, y + h - 22, 80, 16, T("Close")) || UI::panelClose()) G.panel = Panel::None;
 }
 
 void panelPause(float W, float H) {
@@ -1743,6 +1744,8 @@ static void panelCrafter(float W, float H) {
     float lx = x + 6, ly = y + 18, lw = 170;
     int pages = std::max(1, ((int)guns.size() + PER - 1) / PER);
     s_craftPage = std::clamp(s_craftPage, 0, pages - 1);
+    // The crafting sheet behind the list, its scroll box showing the page.
+    UI::subPanel(lx - 3, ly - 3, lw + 14, PER * 24 + 4, pages > 1 ? s_craftPage / float(pages - 1) : -1);
     s_craftSel = std::clamp(s_craftSel, 0, std::max(0, (int)guns.size() - 1));
     if (guns.empty()) R::text(T("No guns here. Bring one in your hands, pockets or stash."), lx, ly + 4, pal(P_LAVENDER));
     for (int k = 0; k < PER; k++) {
@@ -1751,9 +1754,10 @@ static void panelCrafter(float W, float H) {
         const Item& it = *guns[i].it;
         float ry = ly + k * 24;
         bool sel = i == s_craftSel;
-        R::rect(lx, ry, lw, 22, pal(sel ? P_PURPLE : P_DARK, sel ? 0.8f : 0.6f));
+        R::rect(lx, ry, lw, 22, pal(sel ? P_PURPLE : P_DARK, sel ? 0.8f : 0.45f));
         if (sel) R::rectOutline(lx, ry, lw, 22, tierColor(itemTier(it)));
-        UI::itemIcon(it.id, lx + 2, ry + 3, 16);
+        if (!UI::skinSprite("crafting/crafting-cell", lx, ry)) R::rectOutline(lx, ry, 21, 22, pal(P_PURPLE));
+        UI::itemIcon(it.id, lx + 3, ry + 3, 15);
         R::text(itemLabel(it), lx + 22, ry + 3, tierColor(itemTier(it)));
         R::text(T(guns[i].where), lx + 22, ry + 12, pal(P_LAVENDER));
         if (UI::button(lx + lw - 30, ry + 4, 26, 14, sel ? ">" : T("Pick"), !sel)) s_craftSel = i;
@@ -1776,8 +1780,8 @@ static void panelCrafter(float W, float H) {
         R::text(itemLabel(it), rx + 28, ry + 2, tierColor(itemTier(it)));
         R::text(T(tierName(itemTier(it))) + "   " + T("MAG") + " " + std::to_string(magSizeOf(it)), rx + 28, ry + 13, pal(P_BEIGE));
         ry += 30;
-        auto row = [&](const std::string& name, const std::string& desc, const std::string& state, CraftCost c, bool possible, int color) {
-            R::rect(rx, ry, rw, 34, pal(P_PURPLE, 0.25f));
+        auto row = [&](const std::string& name, const std::string& desc, const std::string& state, CraftCost c, bool possible, int color, int toTier = -1) {
+            R::rect(rx, ry, rw, state.empty() ? 46 : 26, pal(P_PURPLE, 0.25f));
             R::text(name, rx + 4, ry + 3, pal(color));
             R::text(desc, rx + 4, ry + 13, pal(P_BEIGE));
             bool clicked = false;
@@ -1785,7 +1789,10 @@ static void panelCrafter(float W, float H) {
             else {
                 std::string price = "$" + std::to_string(c.money) + (c.parts ? "  +" + std::to_string(c.parts) + " " + T("gun parts") : "");
                 bool afford = p.money >= c.money && parts >= c.parts;
-                R::text(price, rx + 4, ry + 23, pal(afford ? P_YGREEN : P_CORAL));
+                // The gun it becomes, from the gun (and the parts it takes).
+                int ins[2] = {it.id, IT_GUNPARTS}, counts[2] = {1, c.parts};
+                float sw = UI::recipe(rx + 3, ry + 23, it.id, tierColor(toTier >= 0 ? toTier : itemTier(it)), ins, counts, c.parts ? 2 : 1, true);
+                R::text(price, rx + sw + 10, ry + 31, pal(afford ? P_YGREEN : P_CORAL));
                 clicked = UI::button(rx + rw - 62, ry + 2, 58, 14, T("Upgrade"), possible && afford, P_YGREEN);
                 if (clicked) {
                     p.money -= c.money;
@@ -1794,13 +1801,13 @@ static void panelCrafter(float W, float H) {
                     Audio::play(Snd::sell, 0.5f, 0.7f);
                 }
             }
-            ry += 38;
+            ry += state.empty() ? 50 : 30;
             return clicked;
         };
         // Tier.
         if (canTierUp(it)) {
             int next = itemTier(it) + 1;
-            if (row(T1("Rework to {0}", T(tierName(next))), T("More damage, better aim, faster reload."), "", tierCost(it), true, P_YELLOW)) {
+            if (row(T1("Rework to {0}", T(tierName(next))), T("More damage, better aim, faster reload."), "", tierCost(it), true, P_YELLOW, next)) {
                 it.tier = (int8_t)next;
                 setNotice(T2("{0} is now {1}.", T(itemDef(it.id).name), T(tierName(next))));
                 save_game();
@@ -1836,7 +1843,7 @@ static void panelCrafter(float W, float H) {
             }
         }
     }
-    if (UI::button(x + w / 2 - 40, by, 80, 16, T("Close"))) G.panel = Panel::None;
+    if (UI::button(x + w / 2 - 40, by, 80, 16, T("Close")) || UI::panelClose()) G.panel = Panel::None;
 }
 
 void panelRecruit(float W, float H) {
@@ -1904,7 +1911,7 @@ void panelRecruit(float W, float H) {
             save_game();
         }
     }
-    if (UI::button(x + w / 2 - 40, y + h - 20, 80, 16, T("Close"))) G.panel = Panel::None;
+    if (UI::button(x + w / 2 - 40, y + h - 20, 80, 16, T("Close")) || UI::panelClose()) G.panel = Panel::None;
 }
 
 // ------------------------------------------------------------------- hordes

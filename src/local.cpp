@@ -79,6 +79,7 @@ void syncWorld(int k) {
     for (int i = 0; i < TT_COUNT; i++) p.turretUnlocked[i] = h.turretUnlocked[i];
     for (int i = 0; i < DU_COUNT; i++) p.defUp[i] = h.defUp[i];
     p.turrets = h.turrets;
+    p.barricades = h.barricades;
     p.tutorialDone = h.tutorialDone;
     p.mechanicMet = h.mechanicMet;
     p.cryptDoneDay = h.cryptDoneDay;

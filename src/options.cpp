@@ -170,6 +170,12 @@ void drawPanel(float W, float H) {
     }
     ly += 22;
     R::text(T("F11: windowed / full screen"), x + 10, ly, pal(P_BEIGE));
+    {
+        // Local co-op: may the shared camera pull back to keep everyone in view?
+        bool z = s_coopZoom;
+        std::string zl = T("Co-op zoom");
+        if (UI::checkbox(x + w - 22 - R::textWidth(zl), ly, z, zl)) setCoopZoom(z);
+    }
 #else
     R::text(T("The browser decides the screen mode."), x + 10, ly, pal(P_BEIGE));
 #endif
@@ -181,7 +187,7 @@ void drawPanel(float W, float H) {
     {
         float bw = std::floor((w - 20 - 8) / 3);
         bool on = Voice::enabled();
-        if (UI::button(x + 10, ly, bw, 16, on ? T("On") : T("Off"), true, on ? P_YGREEN : P_CORAL)) { Voice::setEnabled(!on); save(); }
+        if (UI::checkbox(x + 12, ly + 5, on, on ? T("On") : T("Off"), on ? P_YGREEN : P_CORAL)) { Voice::setEnabled(on); save(); }
         std::string ptt = T("Push to talk") + " (" + Input::keyName(Input::binding(GLFW_KEY_V)) + ")";
         const std::string names[2] = {ptt, T("Open mic")};
         for (int i = 0; i < 2; i++) {

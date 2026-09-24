@@ -487,8 +487,8 @@ void drawSlots(float W, float H) {
     for (int i = 0; i < SAVE_SLOTS; i++) {
         float ry = y + 20 + i * 38;
         SaveInfo info = save_info(i);
-        R::rect(x + 6, ry, w - 12, 34, pal(i % 2 ? P_DARK : P_PURPLE, i % 2 ? 1.0f : 0.3f));
-        R::rectOutline(x + 6, ry, w - 12, 34, pal(P_PURPLE));
+        R::rect(x + 6, ry, w - 12, 34, pal(P_DARK, i % 2 ? 0.3f : 0.12f));
+        R::rectOutline(x + 6, ry, w - 12, 34, pal(P_DARK, 0.55f));
         R::text(T1("Slot {0}", std::to_string(i + 1)), x + 12, ry + 4, pal(P_YELLOW));
         if (info.exists && (info.difficulty != DIFF_NORMAL || info.gameMode != MODE_NORMAL || info.rivals)) {
             std::string tag;
@@ -550,7 +550,8 @@ void drawSlots(float W, float H) {
         R::text(s_confirmDelete ? T1("Slot {0} will be erased for good.", std::to_string(s_confirmSlot + 1))
                                 : T("This will erase the save in this slot."),
                 cx + 10, cy + 24, pal(P_BEIGE));
-        if (UI::button(cx + 10, cy + ch - 24, 118, 16, s_confirmDelete ? T("Erase") : T("Erase & start"), true, P_CORAL)) {
+        int yn = UI::yesNo(cx + cw - 33, cy + 4);
+        if (UI::button(cx + 10, cy + ch - 24, 118, 16, s_confirmDelete ? T("Erase") : T("Erase & start"), true, P_CORAL) || yn == 1) {
             int slot = s_confirmSlot;
             s_confirmSlot = -1;
             if (s_confirmDelete) {
@@ -562,7 +563,7 @@ void drawSlots(float W, float H) {
             }
             return;
         }
-        if (UI::button(cx + cw - 85, cy + ch - 24, 75, 16, T("Cancel"))) s_confirmSlot = -1;
+        if (UI::button(cx + cw - 85, cy + ch - 24, 75, 16, T("Cancel")) || yn == 2) s_confirmSlot = -1;
     }
 }
 
@@ -688,20 +689,23 @@ void menu_draw() {
         R::textCentered("OUTBOUND", W / 2 + 2, ty + 2, pal(P_PURPLE), 6, false);
         R::textCentered("OUTBOUND", W / 2, ty, pal(P_YELLOW), 6, false);
 
-        float bw = 140, bh = 18, bx = std::floor(W / 2 - bw / 2), by = std::floor(H * 0.46f);
+        // Two columns of the pack's menu buttons (UI/Menu/Main Menu): the lettered
+        // ones (Play, Settings, Quit) where they say what the button does.
+        float bw = 140, bh = 21, cw = 76, gap = 8, by = std::floor(H * 0.44f);
+        float bx = std::floor(W / 2 - cw - gap / 2), rx = bx + cw + gap;
         if (s_langPicker) {
             drawLanguagePanel(W, H, !L::chosen());
         } else if (G.panel == Panel::None) {
-            if (UI::button(bx, by, bw, bh, T("Play"))) { s_coopPick = false; G.scene = Scene::Slots; }
-            float cwid = std::floor((bw - 4) / 2);
-            if (UI::button(bx, by + 24, cwid, bh, T("Local co-op"))) { Local::lobbyOpen(); G.scene = Scene::LocalLobby; }
-            if (UI::button(bx + bw - cwid, by + 24, cwid, bh, T("Online co-op"))) G.scene = Scene::Lobby;
-            if (UI::button(bx, by + 48, bw, bh, T("How to play"))) { s_introThenPlay = false; G.scene = Scene::Intro; }
-            float hw = std::floor((bw - 4) / 2);
-            if (UI::button(bx, by + 72, hw, bh, T("Controls"))) G.scene = Scene::Controls;
-            if (UI::button(bx + bw - hw, by + 72, hw, bh, T("Options"))) G.panel = Panel::Options;
-            if (UI::button(bx, by + 96, bw, bh, T("Credits"))) { G.scene = Scene::Credits; s_creditsScroll = 0; }
-            if (UI::button(bx, by + 120, bw, bh, T("Exit"), true, P_CORAL)) G.quit = true;
+            if (UI::menuButton(bx, by, cw, bh, "play", T("Play"))) { s_coopPick = false; G.scene = Scene::Slots; }
+            if (UI::button(rx, by, cw, bh, T("How to play"))) { s_introThenPlay = false; G.scene = Scene::Intro; }
+            if (UI::button(bx, by + 25, cw, bh, T("Local co-op"))) { Local::lobbyOpen(); G.scene = Scene::LocalLobby; }
+            if (UI::button(rx, by + 25, cw, bh, T("Online co-op"))) G.scene = Scene::Lobby;
+            if (UI::button(bx, by + 50, cw, bh, T("Controls"))) G.scene = Scene::Controls;
+            if (UI::menuButton(rx, by + 50, cw, bh, "settings", T("Options"))) G.panel = Panel::Options;
+            if (UI::button(bx, by + 75, cw, bh, T("Credits"))) { G.scene = Scene::Credits; s_creditsScroll = 0; }
+            if (UI::menuButton(rx, by + 75, cw, bh, "quit", T("Exit"))) G.quit = true;
+            bx = std::floor(W / 2 - bw / 2);
+            by -= 30;
             {
                 std::string label = T("Check my other game: IncreMiner");
                 float iw = std::floor(R::textWidth(label)) + 20;
@@ -711,7 +715,7 @@ void menu_draw() {
             }
             if (!Coop::leaveReason().empty()) R::textCentered(Coop::leaveReason(), W / 2, by - 14, pal(P_CORAL));
             // Language shortcut, with the active flag next to it.
-            float lx = bx + bw + 12, ly = by;
+            float lx = rx + cw + 12, ly = by + 30;
             drawFlag(L::get(), lx, ly + 3, 18, 12);
             if (UI::button(lx + 22, ly, 60, bh, T("Language"))) s_langPicker = true;
         }

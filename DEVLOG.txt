@@ -192,6 +192,32 @@ OUTBOUND - DEVLOG (0.11v)
 
 
 
+·THE PACK'S OWN INTERFACE
+
+- Every panel, button, item cell, slider and tooltip is now drawn with the art pack's UI sheets instead of flat boxes: the inventory frame for panels, the beige menu button (pressed in while you point at it), the inventory cell and its "chosen" frame, the menu scroll bar for sliders.
+- The main menu uses the pack's lettered buttons (Play, Settings, Quit) in English, laid out in two columns.
+- The pack's mouse pointer replaces the system one in menus.
+- Closable panels have the inventory's X in their corner. Confirmations (abandon the raid, head outside, erase a save) have the green tick and red cross.
+- Check boxes draw their tick in with the pack's animation. Voice chat on/off is one, and a new "Co-op zoom" box lets you turn off the shared camera zooming out in local co-op.
+- The crafter shows each upgrade as a crafting line from the pack: the gun it becomes, from the gun and the parts it takes. The gun list sits on the crafting sheet, its scroll box showing the page.
+
+·WALLS AND GATES
+
+- The defense console has a Walls tab: wooden walls ($40) and gates ($70), and reinforced ones ($120, $180) once you have repelled a horde. Hold and drag to build a line.
+- They use the pack's buildable wood: straight runs, the four corners and the T where they meet, and gates that swing open with the pack's animation.
+- Gates open for you, your mercenaries and your friends, and close behind you, never on anyone standing in them. A gate can stand across the way out of the compound; a wall cannot.
+- The horde bashes through a wall when that is quicker than walking round it. Reinforced walls take a long time to break. Armor Plating research thickens them too. Repair or sell them from the same tab.
+- The compound's back fence has wire gates now, the middle one locked, that open and close with the pack's animation. The dead can tear them down.
+
+·RAIN AND WATER
+
+- Puddles on grass take the colour of the grass round them, using the pack's green, dark green and bleak yellow versions of every puddle.
+- Rain falls as the pack's own drops, long streaks and short ones, blue and white.
+- The dead and your mercenaries splash as they walk through puddles too, a smaller splash than yours.
+- Buildings have downspouts down their front corners, grey or rusty. The bent ones pour rainwater onto the ground while it rains.
+
+
+
 ·LOCAL CO-OP
 
 - Up to four players on one screen, each on a controller (Xbox or PlayStation) or the keyboard and mouse. Local co-op on the main menu opens a lobby: press A / Cross or START to take a place, B / Circle to leave it, left and right to pick a shirt; the keyboard joins with ENTER. Each place shows its own buttons. Player 1 starts, then picks the save.

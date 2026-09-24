@@ -8,6 +8,7 @@
 #include "prompt.h"
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
+#include <algorithm>
 #include <sstream>
 #include <vector>
 
@@ -24,11 +25,13 @@ static unsigned g_frame = 0;
 // The on-screen keyboard (0.12v) is modal: while it is up only its keys take focus.
 static bool g_oskUp = false, g_oskUpNext = false;
 static FocusRect g_oskRect{0, 0, 0, 0};
+static FocusRect g_titled{0, 0, 0, 0};   // the last panel drawn with a title this frame
 
 void beginFrame() {
     R::clearTextBox();
     g_hasTooltip = false;
     g_focus.clear();
+    g_titled = {0, 0, 0, 0};
     g_frame++;
     g_oskUp = g_oskUpNext;
     g_oskUpNext = false;
@@ -43,17 +46,148 @@ bool hover(float x, float y, float w, float h) {
 
 bool overPanel() { return g_overPanel; }
 
+// ---- the art pack's UI skin (0.12v)
+// Panels, buttons, item cells, sliders and check boxes are drawn with the pack's own
+// UI sheets (UI/Inventory, UI/Menu, UI/Crafting), cut in nine so they fit any size:
+// the corners stay as drawn, the edges repeat and the middle stretches. Without the
+// pack the flat colours below are used.
+const Assets::Sprite* skin(const char* key) {
+    static std::vector<std::pair<std::string, const Assets::Sprite*>> cache;
+    for (auto& c : cache)
+        if (c.first == key) return c.second;
+    const Assets::Sprite* s = Assets::find(std::string("ui/") + key);
+    if (s && s->valid()) cache.push_back({key, s});
+    return s && s->valid() ? s : nullptr;
+}
+
+// Part of a frame: the pixels (px, py, pw, ph) of it.
+static Assets::Frame subFrame(const Assets::Frame& f, float px, float py, float pw, float ph) {
+    Assets::Frame o;
+    float du = (f.u1 - f.u0) / f.w, dv = (f.v1 - f.v0) / f.h;
+    o.u0 = f.u0 + du * px;
+    o.u1 = f.u0 + du * (px + pw);
+    o.v0 = f.v0 + dv * py;
+    o.v1 = f.v0 + dv * (py + ph);
+    o.w = (int)pw;
+    o.h = (int)ph;
+    return o;
+}
+
+// A run of a frame's pixels laid along a length: repeated at its own size (the last
+// copy cut short), or stretched.
+static void span(const Assets::Frame& f, float px, float py, float pw, float ph, float x, float y, float w, float h,
+                 bool repeatX, bool repeatY, Color c) {
+    if (w <= 0 || h <= 0 || pw <= 0 || ph <= 0) return;
+    float stepX = repeatX ? pw : w, stepY = repeatY ? ph : h;
+    for (float oy = 0; oy < h; oy += stepY)
+        for (float ox = 0; ox < w; ox += stepX) {
+            float cw = std::min(stepX, w - ox), ch = std::min(stepY, h - oy);
+            float sw = repeatX ? cw : pw, sh = repeatY ? ch : ph;
+            R::frame(subFrame(f, px, py, sw, sh), x + ox, y + oy, cw, ch, c);
+        }
+}
+
+void nine(const Assets::Frame& f, float x, float y, float w, float h, int l, int t, int r, int b, Color c, bool repeatEdges) {
+    x = std::floor(x); y = std::floor(y); w = std::floor(w); h = std::floor(h);
+    float mw = (float)(f.w - l - r), mh = (float)(f.h - t - b);
+    float iw = w - l - r, ih = h - t - b;
+    if (iw < 0 || ih < 0) { R::frame(f, x, y, w, h, c); return; }
+    R::frame(subFrame(f, 0, 0, l, t), x, y, l, t, c);
+    R::frame(subFrame(f, f.w - r, 0, r, t), x + w - r, y, r, t, c);
+    R::frame(subFrame(f, 0, f.h - b, l, b), x, y + h - b, l, b, c);
+    R::frame(subFrame(f, f.w - r, f.h - b, r, b), x + w - r, y + h - b, r, b, c);
+    span(f, l, 0, mw, t, x + l, y, iw, t, repeatEdges, false, c);
+    span(f, l, f.h - b, mw, b, x + l, y + h - b, iw, b, repeatEdges, false, c);
+    span(f, 0, t, l, mh, x, y + t, l, ih, false, repeatEdges, c);
+    span(f, f.w - r, t, r, mh, x + w - r, y + t, r, ih, false, repeatEdges, c);
+    span(f, l, t, mw, mh, x + l, y + t, iw, ih, false, false, c);
+}
+
+bool nineSprite(const char* key, float x, float y, float w, float h, int l, int t, int r, int b, Color c, bool repeatEdges) {
+    const Assets::Sprite* s = skin(key);
+    if (!s) return false;
+    nine(s->frame(0), x, y, w, h, l, t, r, b, c, repeatEdges);
+    return true;
+}
+
+bool skinSprite(const char* key, float x, float y, int frame, Color c) {
+    const Assets::Sprite* s = skin(key);
+    if (!s) return false;
+    const Assets::Frame& f = s->frame(frame);
+    R::frame(f, std::floor(x), std::floor(y), (float)f.w, (float)f.h, c);
+    return true;
+}
+
+// Text with a one-pixel dark ring, readable on the light buttons.
+void textOutline(const std::string& s, float x, float y, Color c, Color ring) {
+    for (int oy = -1; oy <= 1; oy++)
+        for (int ox = -1; ox <= 1; ox++)
+            if (ox || oy) R::text(s, x + ox, y + oy, ring);
+    R::text(s, x, y, c);
+}
+
+// The pack's inks: the frames' dark line and the buttons' beige.
+static Color ink(int r, int g, int b, float a = 1) { return Color(r / 255.0f, g / 255.0f, b / 255.0f, a); }
+static Color INK_DARK() { return ink(44, 29, 53); }
+
 void panel(float x, float y, float w, float h, const std::string& title) {
     if (hover(x, y, w, h)) g_overPanelNext = g_overPanel = true;
     R::setTextBox(x, y, x + w, y + h);
     R::rect(x + 2, y + 2, w, h, pal(P_DARK, 0.6f));
-    R::rect(x, y, w, h, pal(P_DARK));
-    R::rectOutline(x, y, w, h, pal(P_PURPLE));
-    R::rectOutline(x + 1, y + 1, w - 2, h - 2, pal(P_DARK));
-    if (!title.empty()) {
-        R::rect(x + 1, y + 1, w - 2, 13, pal(P_PURPLE));
-        R::text(title, x + 5, y + 4, pal(P_WHITE));
+    bool skinned = w >= 16 && h >= 16 && nineSprite("inventory/inventory_1", x, y, w, h, 5, 6, 5, 6, Color(), true);
+    if (!skinned) {
+        R::rect(x, y, w, h, pal(P_DARK));
+        R::rectOutline(x, y, w, h, pal(P_PURPLE));
+        R::rectOutline(x + 1, y + 1, w - 2, h - 2, pal(P_DARK));
     }
+    if (!title.empty()) {
+        g_titled = {x, y, w, h};
+        if (skinned) {
+            // A title plate in the frame's dark ink, underlined with its beige.
+            R::rect(x + 5, y + 4, w - 10, 10, ink(71, 64, 89));
+            R::rect(x + 5, y + 14, w - 10, 1, ink(199, 187, 167, 0.7f));
+            R::textShadow(title, x + 7, y + 6, pal(P_WHITE), 1, INK_DARK());
+        } else {
+            R::rect(x + 1, y + 1, w - 2, 13, pal(P_PURPLE));
+            R::text(title, x + 5, y + 4, pal(P_WHITE));
+        }
+    }
+}
+
+// The lighter sheet (the crafting menu's), for a list inside a panel. With `scroll`
+// (0..1, or <0 for none) its scroll bar's box sits that far down the bar.
+void subPanel(float x, float y, float w, float h, float scroll) {
+    if (!nineSprite("crafting/crafting-main-menu", x, y, w, h, 3, 3, 10, 3, Color(), true)) {
+        R::rect(x, y, w, h, pal(P_PURPLE, 0.5f));
+        R::rectOutline(x, y, w, h, pal(P_PURPLE));
+        return;
+    }
+    if (scroll >= 0)
+        if (const Assets::Sprite* s = skin("crafting/crafting_scrollbox")) {
+            const Assets::Frame& f = s->frame(0);
+            float travel = std::max(0.0f, h - 10 - f.h);
+            R::frame(f, std::floor(x + w - 8), std::floor(y + 5 + travel * clampf(scroll, 0, 1)), f.w, f.h);
+        }
+}
+
+bool panelClose() { return g_titled.w > 0 && closeBox(g_titled.x + g_titled.w - 8, g_titled.y - 2); }
+
+// The close box in a panel's corner (the inventory's X). True when clicked.
+bool closeBox(float x, float y) {
+    focusable(x - 2, y - 2, 11, 11);
+    bool hov = hover(x - 2, y - 2, 11, 11);
+    bool down = hov && Input::mouseHeld(0);
+    if (!skinSprite(down ? "inventory/inventory_close_pressed" : "inventory/inventory_close_not-pressed", x, y + (down ? 1 : 0), 0,
+                    hov ? Color(1.15f, 1.1f, 1.1f) : Color())) {
+        R::rect(x, y, 7, 7, pal(hov ? P_CORAL : P_PURPLE));
+        R::text("x", x + 1, y - 1, pal(P_WHITE));
+    }
+    if (hov && (Input::mousePressed(0) || (Input::gamepad() && Input::pressed(GLFW_KEY_E)))) {
+        Input::consumeMouse();
+        Audio::play(Snd::click, 0.5f);
+        return true;
+    }
+    return false;
 }
 
 void focusable(float x, float y, float w, float h) {
@@ -111,18 +245,167 @@ void padNavigate(int context) {
 bool button(float x, float y, float w, float h, const std::string& label, bool enabled, int color) {
     if (enabled) focusable(x, y, w, h);
     bool hov = enabled && hover(x, y, w, h);
-    int bg = !enabled ? P_DARK : hov ? P_LAVENDER : P_PURPLE;
-    R::rect(x, y, w, h, pal(bg));
-    R::rectOutline(x, y, w, h, pal(hov ? P_WHITE : P_DARK));
-    int tc = !enabled ? P_PURPLE : hov ? P_DARK : color;
     float tw = R::textWidth(label);
-    R::text(label, std::floor(x + (w - tw) / 2), std::floor(y + (h - 7) / 2), pal(tc));
+    float tx = std::floor(x + (w - tw) / 2), ty = std::floor(y + (h - 7) / 2);
+    // The pack's beige button (UI/Menu/Main Menu/Blank): pressed in while pointed at.
+    const bool tall = h >= 10 && w >= 14;
+    if (tall && hov && nineSprite("menu/main menu/blank_pressed", x, y + 2, w, h - 2, 6, 2, 6, 3, Color(), false)) {
+        textOutline(label, tx, ty + 1, color == P_WHITE ? pal(P_WHITE) : pal(color), INK_DARK());
+    } else if (tall && nineSprite("menu/main menu/blank_not-pressed", x, y, w, h, 6, 2, 6, 5, enabled ? Color() : Color(0.72f, 0.7f, 0.76f), false)) {
+        if (!enabled) R::text(label, tx, ty - 1, ink(58, 48, 70, 0.85f));
+        else if (color == P_WHITE) R::text(label, tx, ty - 1, INK_DARK());
+        else textOutline(label, tx, ty - 1, pal(color), INK_DARK());
+    } else {
+        int bg = !enabled ? P_DARK : hov ? P_LAVENDER : P_PURPLE;
+        R::rect(x, y, w, h, pal(bg));
+        R::rectOutline(x, y, w, h, pal(hov ? P_WHITE : P_DARK));
+        int tc = !enabled ? P_PURPLE : hov ? P_DARK : color;
+        R::text(label, tx, ty, pal(tc));
+    }
     if (hov && (Input::mousePressed(0) || (Input::gamepad() && Input::pressed(GLFW_KEY_E)))) {
         Input::consumeMouse();
         Audio::play(Snd::click, 0.5f);
         return true;
     }
     return false;
+}
+
+// A crafting line (UI/Crafting): the result, then `=` (or `<` for an upgrade) and what
+// goes in, joined by `+`. One or two inputs use the pack's drawn strips (Crafting_1_1,
+// _1_2, _2_1, _2_2); more are put together from its cell, plus, equal and arrow.
+// Returns the width it took.
+float recipe(float x, float y, int result, Color resultTint, const int* ins, const int* counts, int n, bool upgrade) {
+    x = std::floor(x); y = std::floor(y);
+    std::vector<float> cells;
+    char key[40];
+    std::snprintf(key, sizeof key, "crafting/crafting_%d_%d", upgrade ? 2 : 1, n);
+    const Assets::Sprite* strip = n >= 1 && n <= 2 ? skin(key) : nullptr;
+    float width = 0;
+    if (strip) {
+        const Assets::Frame& f = strip->frame(0);
+        R::frame(f, x, y, (float)f.w, (float)f.h);
+        float first = upgrade ? 28 : 26;
+        cells = {0, first};
+        if (n == 2) cells.push_back((float)f.w - 21);
+        width = (float)f.w;
+    } else {
+        const Assets::Sprite* cell = skin("crafting/crafting-cell");
+        auto drawCell = [&](float cx) {
+            if (cell) R::frame(cell->frame(0), cx, y, 21, 22);
+            else { R::rect(cx, y, 21, 21, pal(P_DARK)); R::rectOutline(cx, y, 21, 21, pal(P_BEIGE)); }
+            cells.push_back(cx - x);
+        };
+        float cx = x;
+        drawCell(cx);
+        cx += 21;
+        for (int i = 0; i < n; i++) {
+            const char* join = i == 0 ? (upgrade ? "crafting/crafting_arrow" : "crafting/crafting_equal") : "crafting/crafting_plus";
+            const Assets::Sprite* js = skin(join);
+            float jw = js ? (float)js->frame(0).w : 6;
+            if (js) R::frame(js->frame(0), cx, y + std::floor((21 - js->frame(0).h) / 2), jw, (float)js->frame(0).h);
+            else R::text(i == 0 ? (upgrade ? "<" : "=") : "+", cx, y + 7, pal(P_BEIGE));
+            cx += jw;
+            drawCell(cx);
+            cx += 21;
+        }
+        width = cx - x;
+    }
+    auto icon = [&](int k, int id, int count, Color tint) {
+        if (k >= (int)cells.size() || id <= IT_NONE) return;
+        float cx = x + cells[k];
+        itemIcon(id, cx + 3, y + 3, 15, tint);
+        if (count > 1) {
+            std::string c = std::to_string(count);
+            R::textShadow(c, cx + 20 - R::textWidth(c), y + 14, pal(P_WHITE));
+        }
+    };
+    // The result's cell washed in `resultTint` (a gun's new tier colour, say).
+    if (resultTint.a > 0 && !cells.empty()) R::rect(x + cells[0] + 2, y + 2, 17, 17, resultTint.withA(resultTint.a * 0.35f));
+    icon(0, result, 1, Color());
+    for (int i = 0; i < n; i++) icon(i + 1, ins[i], counts ? counts[i] : 1, Color());
+    return width;
+}
+
+// The main menu's lettered buttons (UI/Menu/Main Menu: Play, Load, Save, Settings,
+// Quit), used where the label is theirs; any other label gets the blank one.
+bool menuButton(float x, float y, float w, float h, const char* art, const std::string& label, bool enabled) {
+    std::string up = std::string("menu/main menu/") + art + "_not-pressed", down = std::string("menu/main menu/") + art + "_pressed";
+    const Assets::Sprite* su = skin(up.c_str());
+    const Assets::Sprite* sd = skin(down.c_str());
+    // Their letters are English, so other languages get the blank one with the label.
+    if (!su || !sd || !enabled || L::get() != LANG_EN || w < su->w || h < su->h - 2) return button(x, y, w, h, label, enabled);
+    focusable(x, y, w, h);
+    bool hov = hover(x, y, w, h);
+    const Assets::Frame& f = (hov ? sd : su)->frame(0);
+    float sx = std::floor(x + (w - f.w) / 2), sy = std::floor(y + (h - su->h) / 2) + (hov ? 2 : 0);
+    R::frame(f, sx, sy, (float)f.w, (float)f.h);
+    if (hov && (Input::mousePressed(0) || (Input::gamepad() && Input::pressed(GLFW_KEY_E)))) {
+        Input::consumeMouse();
+        Audio::play(Snd::click, 0.5f);
+        return true;
+    }
+    return false;
+}
+
+// The small green tick and red cross (UI/Menu/Button_Yes, Button_No). 1 yes, 2 no.
+int yesNo(float x, float y) {
+    int res = 0;
+    for (int i = 0; i < 2; i++) {
+        float bx = x + i * 14;
+        focusable(bx - 2, y - 2, 14, 13);
+        bool hov = hover(bx - 2, y - 2, 14, 13);
+        const char* key = i == 0 ? (hov ? "menu/button_yes_pressed" : "menu/button_yes_not-pressed")
+                                 : (hov ? "menu/button_no_pressed" : "menu/button_no_not-pressed");
+        if (!skinSprite(key, bx, y + (hov ? 1 : 0))) {
+            R::rect(bx, y, 9, 9, pal(i == 0 ? P_YGREEN : P_CORAL));
+            R::text(i == 0 ? "Y" : "N", bx + 2, y + 1, pal(P_DARK));
+        }
+        if (hov && (Input::mousePressed(0) || (Input::gamepad() && Input::pressed(GLFW_KEY_E)))) {
+            Input::consumeMouse();
+            Audio::play(Snd::click, 0.5f);
+            res = i + 1;
+        }
+    }
+    return res;
+}
+
+// A check box (UI/Menu/Checkmark): the tick draws itself in when it is turned on.
+bool checkbox(float x, float y, bool& on, const std::string& label, int labelColor) {
+    static std::vector<std::pair<const bool*, float>> ticks;   // when each box was last turned on
+    float lw = label.empty() ? 0 : R::textWidth(label) + 5;
+    focusable(x - 2, y - 2, 11 + lw, 11);
+    bool hov = hover(x - 2, y - 2, 11 + lw, 11);
+    bool changed = false;
+    if (hov && (Input::mousePressed(0) || (Input::gamepad() && Input::pressed(GLFW_KEY_E)))) {
+        Input::consumeMouse();
+        Audio::play(Snd::click, 0.5f);
+        on = !on;
+        changed = true;
+    }
+    float since = 1e9f, now = (float)glfwGetTime();
+    auto it = std::find_if(ticks.begin(), ticks.end(), [&](auto& p) { return p.first == &on; });
+    if (changed && on) {
+        if (it == ticks.end()) ticks.push_back({&on, now});
+        else it->second = now;
+    }
+    for (auto& p : ticks)
+        if (p.first == &on) since = now - p.second;
+    if (!skinSprite("menu/checkmark-body", x, y, 0, hov ? Color(1.15f, 1.12f, 1.1f) : Color())) {
+        R::rect(x, y, 7, 7, pal(P_DARK));
+        R::rectOutline(x, y, 7, 7, pal(hov ? P_WHITE : P_LAVENDER));
+    }
+    if (on) {
+        // "Checkmark-Sheet5" (the tick drawing itself in) and the still "Checkmark"
+        // share a name; either way the last frame is the finished tick.
+        if (const Assets::Sprite* sheet = skin("menu/checkmark")) {
+            int n = sheet->frameCount();
+            int fr = std::min(n - 1, (int)(since / 0.05f));
+            const Assets::Frame& f = sheet->frame(fr);
+            R::frame(f, x, y + 1, (float)f.w, (float)f.h);
+        } else R::rect(x + 2, y + 2, 3, 3, pal(P_YGREEN));
+    }
+    if (!label.empty()) R::text(label, x + 11, y, pal(hov ? P_WHITE : labelColor));
+    return changed;
 }
 
 // ---- the on-screen keyboard: typing a name with a controller (0.12v)
@@ -243,15 +526,22 @@ int itemSlot(float x, float y, const Item& it, bool highlight, bool dim) {
     focusable(x, y, SLOT, SLOT);
     bool hov = hover(x, y, SLOT, SLOT);
     bool elite = !it.empty() && itemDef(it.id).elite;
-    R::rect(x, y, SLOT, SLOT, pal(hov ? P_PURPLE : P_DARK));
+    // The pack's inventory cell; the chosen one (UI/Inventory/Inventory-Chosen) when
+    // pointed at or picked.
+    bool skinned = (hov || highlight) ? nineSprite("inventory/inventory-chosen", x, y, SLOT, SLOT, 3, 3, 3, 3, highlight ? Color(1.1f, 1.05f, 0.8f) : Color(), false)
+                                      : nineSprite("inventory/inventory-cell", x, y, SLOT, SLOT, 3, 3, 3, 4, Color(), false);
+    if (!skinned) R::rect(x, y, SLOT, SLOT, pal(hov ? P_PURPLE : P_DARK));
     // Guns wear their tier's colour: a faint wash and the frame. Elite (legendary)
     // ones also glint in the corner.
     if (hasTier(it)) {
         Color tc = tierColor(itemTier(it));
-        R::rect(x + 1, y + 1, SLOT - 2, SLOT - 2, tc.withA(hov ? 0.28f : 0.18f));
-        R::rectOutline(x, y, SLOT, SLOT, highlight ? pal(P_YELLOW) : tc);
-    } else {
+        R::rect(x + 2, y + 2, SLOT - 4, SLOT - 4, tc.withA(hov ? 0.28f : 0.18f));
+        if (skinned) R::rectOutline(x + 1, y + 1, SLOT - 2, SLOT - 2, highlight ? pal(P_YELLOW) : tc);
+        else R::rectOutline(x, y, SLOT, SLOT, highlight ? pal(P_YELLOW) : tc);
+    } else if (!skinned) {
         R::rectOutline(x, y, SLOT, SLOT, pal(highlight ? P_YELLOW : (hov ? P_LAVENDER : P_PURPLE)));
+    } else if (highlight) {
+        R::rectOutline(x + 1, y + 1, SLOT - 2, SLOT - 2, pal(P_YELLOW, 0.8f));
     }
     if (elite) {
         float glint = 0.55f + 0.45f * std::sin((float)(x + y) * 0.1f + (float)glfwGetTime() * 4.0f);
@@ -343,12 +633,29 @@ void bar(float x, float y, float w, float h, float frac, int fg, int bg) {
 static bool s_sliderDrag = false;
 static float s_dragX = 0, s_dragY = 0;   // which slider the drag belongs to (its position)
 
+// The pack's scroll bar (UI/Menu/Scrollbar) as the track, filled up to the value, and
+// its scroll box as the knob (the red one, Scrollbar_Scrollbox_1, while held).
+static void drawSlider(float x, float y, float w, float h, float value, bool hot, bool held) {
+    float kx = std::floor(x + value * (w - 4));
+    if (nineSprite("menu/scrollbar", x, y + h / 2 - 3.5f, w, 7, 3, 3, 3, 3, hot ? Color(1.12f, 1.1f, 1.08f) : Color(), true)) {
+        float fw = std::floor((w - 4) * value);
+        if (fw > 0) R::rect(x + 2, std::floor(y + h / 2 - 3.5f) + 2, fw, 3, pal(P_BLUE, 0.85f));
+        if (skinSprite(held ? "menu/scrollbar_scrollbox_1" : "menu/scrollbar_scrollbox", kx, std::floor(y + h / 2 - 4.5f))) return;
+    } else {
+        R::rect(x, y, w, h, pal(P_DARK));
+        R::rect(x, y, std::floor(w * value), h, pal(P_BLUE));
+        R::rectOutline(x, y, w, h, pal(hot || held ? P_WHITE : P_PURPLE));
+    }
+    R::rect(kx, y - 2, 4, h + 4, pal(P_WHITE));
+}
+
 bool slider(float x, float y, float w, float h, float& value) {
     value = clampf(value, 0, 1);
     // Only the slider that started a drag follows it; the others stay put.
     bool mine = s_sliderDrag && s_dragX == x && s_dragY == y;
     bool sliderDrag = mine;
     focusable(x - 2, y - 3, w + 4, h + 6);
+    bool hot = hover(x - 2, y - 2, w + 4, h + 4);
     // Controller: left/right on the focused slider nudges it instead of moving focus.
     if (!sliderDrag && hover(x - 2, y - 3, w + 4, h + 6) && Input::usingPad()) {
         int n = Input::navDir();
@@ -358,7 +665,7 @@ bool slider(float x, float y, float w, float h, float& value) {
         }
     }
     if (!sliderDrag) {
-        if (hover(x - 2, y - 2, w + 4, h + 4) && Input::mousePressed(0)) {
+        if (hot && Input::mousePressed(0)) {
             Input::consumeMouse();
             s_sliderDrag = true;
             s_dragX = x;
@@ -366,18 +673,10 @@ bool slider(float x, float y, float w, float h, float& value) {
             float v = clampf((Input::mouse().x - x) / w, 0, 1);
             bool ch = (v != value);
             value = v;
-            R::rect(x, y, w, h, pal(P_DARK));
-            R::rect(x, y, std::floor(w * value), h, pal(P_BLUE));
-            R::rectOutline(x, y, w, h, pal(P_WHITE));
-            float kx = x + value * (w - 4);
-            R::rect(kx, y - 2, 4, h + 4, pal(P_WHITE));
+            drawSlider(x, y, w, h, value, true, true);
             return ch;
         }
-        R::rect(x, y, w, h, pal(P_DARK));
-        R::rect(x, y, std::floor(w * value), h, pal(P_BLUE));
-        R::rectOutline(x, y, w, h, pal(hover(x - 2, y - 2, w + 4, h + 4) ? P_WHITE : P_PURPLE));
-        float kx = x + value * (w - 4);
-        R::rect(kx, y - 2, 4, h + 4, pal(P_WHITE));
+        drawSlider(x, y, w, h, value, hot, false);
         return false;
     }
     // Active drag: use the raw held state so consumeMouse() from prior frames
@@ -387,19 +686,11 @@ bool slider(float x, float y, float w, float h, float& value) {
         bool ch = (v != value);
         value = v;
         Input::consumeMouse();
-        R::rect(x, y, w, h, pal(P_DARK));
-        R::rect(x, y, std::floor(w * value), h, pal(P_BLUE));
-        R::rectOutline(x, y, w, h, pal(P_WHITE));
-        float kx = x + value * (w - 4);
-        R::rect(kx, y - 2, 4, h + 4, pal(P_WHITE));
+        drawSlider(x, y, w, h, value, true, true);
         return ch;
     }
     s_sliderDrag = false;
-    R::rect(x, y, w, h, pal(P_DARK));
-    R::rect(x, y, std::floor(w * value), h, pal(P_BLUE));
-    R::rectOutline(x, y, w, h, pal(P_PURPLE));
-    float kx = x + value * (w - 4);
-    R::rect(kx, y - 2, 4, h + 4, pal(P_WHITE));
+    drawSlider(x, y, w, h, value, false, false);
     return true;  // released: caller persists the final value
 }
 
@@ -424,9 +715,13 @@ float textWrap(const std::string& s, float x, float y, float maxW, Color c, floa
     return lines.size() * lineH;
 }
 
+static bool g_cursor = false;
+void setCursor(bool drawn) { g_cursor = drawn; }
+void drawCursor();
+
 void endFrame() {
     R::clearTextBox();
-    if (!g_hasTooltip) return;
+    if (!g_hasTooltip) { drawCursor(); return; }
     std::vector<std::string> lines;
     std::stringstream ss(g_ttBody);
     std::string line;
@@ -440,10 +735,22 @@ void endFrame() {
     float x = m.x + 10, y = m.y + 10;
     if (x + w + 10 > R::width()) x = m.x - w - 14;
     if (y + h > R::height()) y = R::height() - h - 2;
-    R::rect(x, y, w + 10, h, pal(P_DARK));
-    R::rectOutline(x, y, w + 10, h, pal(P_LAVENDER));
-    R::text(g_ttTitle, x + 5, y + 4, g_ttColor);
+    if (!nineSprite("inventory/inventory_1", x - 2, y - 2, w + 14, h + 4, 5, 6, 5, 6, Color(), true)) {
+        R::rect(x, y, w + 10, h, pal(P_DARK));
+        R::rectOutline(x, y, w + 10, h, pal(P_LAVENDER));
+    }
+    R::textShadow(g_ttTitle, x + 5, y + 4, g_ttColor, 1, INK_DARK());
     for (size_t i = 0; i < lines.size(); i++) R::text(lines[i], x + 5, y + 14 + i * 9, pal(P_BEIGE));
+    drawCursor();
+}
+
+void drawCursor() {
+    if (!g_cursor) return;
+    Vec2 m = Input::mouse();
+    if (!skinSprite("menu/cursor", m.x, m.y)) {
+        R::rect(m.x, m.y, 1, 6, pal(P_WHITE));
+        R::rect(m.x, m.y, 4, 1, pal(P_WHITE));
+    }
 }
 
 }  // namespace UI

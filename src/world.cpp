@@ -38,6 +38,12 @@ static const SolidInfo SOLIDS[S_COUNT] = {
     {WHITE, -1, true, false, P_PURPLE,             0.0f},          // S_CRYPT_GATE: the last room's sealed way back (0.11v)
     {WHITE, -1, true, false, P_DARK,               0.0f},          // S_VOID: nothing, round an upper floor (0.11v)
     {WHITE, -1, false, false, P_TAN,               0.0f},          // S_STAIRS: a flight of stairs (0.11v)
+    // Barricades (0.12v): waist high, so bullets fly over them, but nothing walks through.
+    {WHITE, -1, false, false, P_ORANGE,            0.0f},          // S_BARRICADE
+    {WHITE, -1, false, false, P_ORANGE,            0.0f},          // S_GATE
+    {WHITE, -1, false, false, P_TAN,               0.0f, false},   // S_GATE_OPEN
+    {FENCE, 60, false, false, P_TAN,               0.0f},          // S_FENCE_GATE
+    {FENCE, -1, false, false, P_TAN,               0.0f, false},   // S_FENCE_GATE_OPEN
 };
 
 // What can stand in a building. FP_WALL pieces go against the back wall, FP_FREE ones
@@ -1948,6 +1954,11 @@ void World::generate(uint64_t seedIn, int day) {
             g.setSolid(homeTx + i, homeTy + 9, S_FENCE);
             g.setSolid(homeTx - 9, homeTy + i, S_FENCE);
             g.setSolid(homeTx + 9, homeTy + i, S_FENCE);
+        } else {
+            // The back of the compound has wire gates (0.12v): they open for you and
+            // your people, and the dead have to tear them down. The middle one is locked.
+            g.setSolid(homeTx + i, homeTy - 9, S_FENCE_GATE);
+            at(homeTx + i, homeTy - 9).variant = i == 0 ? 1 : 0;
         }
     }
 

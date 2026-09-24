@@ -631,6 +631,22 @@ struct Dresser {
             if (kind != OB_NONE) wallDeco(x, y, kind, pick, rng.chance(0.5f) && kind == OB_POSTER);
             if (rng.chance(city ? 0.12f : 0.2f)) wallDeco(x, y, OB_IVY, rng.irange(0, 12), false);
         }
+        // A downspout down a front corner or two, rusty on the older places. The ones
+        // that spill out onto the ground run with rainwater when it rains.
+        if (b.kind != BK_MILITARY && b.w >= 4)
+            for (int side = 0; side < 2; side++) {
+                if (!rng.chance(city ? 0.6f : 0.4f)) continue;
+                int x = side ? b.x0 + b.w - 1 : b.x0;
+                int s = W.at(x, y).solid;
+                if (s != S_WALL_CONCRETE && s != S_WALL_WOOD && s != S_WALL_BRICK) continue;
+                int pick = (brick || rng.chance(0.3f) ? 2 : 0) + (rng.chance(0.65f) ? 1 : 0);
+                WorldProp p;
+                p.kind = PROP_WALLDECO;
+                p.variant = OB_DOWNSPOUT;
+                p.frame = Art::objectFrame(pick, 0);
+                p.pos = Vec2(x * (float)TILE + (side ? 12.0f : 4.0f), (y + 1) * (float)TILE);
+                W.props.push_back(p);
+            }
         if (shop)
             for (int d = 0; d < b.doorCount; d++) {
                 if (b.doorY[d] != y || b.isDoor(b.doorX[d] - 1, y)) continue;   // the left leaf of a front door

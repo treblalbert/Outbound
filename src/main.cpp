@@ -28,6 +28,8 @@
 #include <emscripten/html5.h>
 #endif
 
+static void devBarricades(int argc, char** argv);
+
 std::string g_dataDir;
 std::string g_saveDir;
 
@@ -112,6 +114,7 @@ static void loadCredits() {
 //   --window=WxH         open the window at that size (e.g. 1920x1080 for store shots)
 //   --seed=N             with --raid, a fixed world seed (the same world every run)
 //   --at=X,Y             with --raid, start standing on that tile
+//   --barricades         with --raid or --defense, a ring of walls and gates round the bunker
 //   --local=N            with --raid, N local co-op players (extras on controller slots)
 struct DevShot { std::string path; float at; bool done; };
 static std::vector<DevShot> g_devShots;
@@ -272,6 +275,7 @@ static void applyDevArgs(int argc, char** argv) {
         G.devNoSave = true;
         new_game();
         G.prof.money = 20000;
+        devBarricades(argc, argv);
         defense_enter();
         return;
     }
@@ -318,6 +322,7 @@ static void applyDevArgs(int argc, char** argv) {
     if (missionActive) { G.prof.mission.day = G.prof.day; G.prof.mission.type = 1; G.prof.mission.target = 5; G.prof.mission.reward = 180; }
     if (timeOverride >= 0) G.prof.timeMin = timeOverride;
     addToSlots(G.prof.inv, makeItem(IT_GRENADE, 3));
+    devBarricades(argc, argv);
     if (squad) {
         for (int t : {1, 3}) {
             Hireling h;
@@ -462,6 +467,25 @@ static void applyDevArgs(int argc, char** argv) {
     }
 }
 
+// --barricades: a ring of walls round the bunker with gates across the way out, to
+// look at and to throw a horde against.
+static void devBarricades(int argc, char** argv) {
+    bool on = false;
+    for (int i = 1; i < argc; i++) on = on || std::string(argv[i]) == "--barricades";
+    if (!on) return;
+    G.prof.barricades.clear();
+    const int R = 5;
+    for (int dy = -R; dy <= R; dy++)
+        for (int dx = -R; dx <= R; dx++) {
+            if (std::abs(dx) != R && std::abs(dy) != R) continue;
+            Barricade b;
+            b.dx = dx; b.dy = dy;
+            bool lane = dy == R && std::abs(dx) <= 1, side = dx == -R && std::abs(dy) <= 0;
+            b.type = lane ? BT_WOOD_GATE : side ? BT_REINF_GATE : dy == -R ? BT_REINF_WALL : BT_WOOD_WALL;
+            G.prof.barricades.push_back(b);
+        }
+}
+
 // One frame of the game. The desktop build spins this in a while loop; the browser
 // hands control back between frames, so it calls this from requestAnimationFrame.
 namespace {
@@ -591,8 +615,12 @@ void frame() {
     }
 #endif
     UI::padNavigate((int)G.scene * 64 + (int)G.panel + 4096 * menu_navContext());
+    // The pack's pointer (UI/Menu/Cursor) stands in for the system's, drawn by the UI
+    // next frame; out in the world the crosshair does, and in local co-op every
+    // player's own pointer.
     bool hideCursor = G.scene == Scene::Raid && G.panel == Panel::None;
-    glfwSetInputMode(window, GLFW_CURSOR, hideCursor ? GLFW_CURSOR_HIDDEN : GLFW_CURSOR_NORMAL);
+    UI::setCursor(!hideCursor && !Local::active() && glfwGetWindowAttrib(window, GLFW_HOVERED));
+    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
 
     R::present(G.lighting, G.drawCam, fbw, fbh);
 #ifndef __EMSCRIPTEN__

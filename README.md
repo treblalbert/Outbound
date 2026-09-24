@@ -165,6 +165,14 @@ Auto, Flamethrower, Laser, Rocket, gated by hordes repelled) and research global
 upgrades. Turrets persist between days. Sleeping patches the bunker up and restores
 half the plating on standing turrets; wrecked turrets need a paid repair.
 
+Its **Walls** tab builds barricades from the art pack's buildable wood: wooden walls
+and gates, and reinforced ones once a horde has been repelled. Hold the button and
+drag to lay a line. The walls join up at corners and T-junctions. Gates swing open
+for you, your mercenaries and your friends, and shut behind you. The dead bash
+through a wall when going round it would take longer, and a reinforced wall holds them
+a long time. Broken barricades are repaired or sold from the same tab. The compound's
+back fence now has wire gates (the middle one locked) that open the same way.
+
 The **recruiter** hires up to three mercenaries. The more you pay, the better their
 gun, health and aim. Set each one to follow you outside or guard the compound. A
 hireling who dies is gone for good, and their gun is left on the body.

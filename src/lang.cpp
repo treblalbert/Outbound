@@ -717,6 +717,7 @@ const Entry TABLE[] = {
     {"Shows where your friends are, on the edge of the screen and on the map.", "Muestra donde estan tus amigos, en el borde de la pantalla y en el mapa."},
     {"VOICE CHAT (CO-OP)", "CHAT DE VOZ (COOPERATIVO)"},
     {"On", "Si"},
+    {"Co-op zoom", "Zoom cooperativo"},
     {"Off", "No"},
     {"Push to talk", "Pulsar para hablar"},
     {"Open mic", "Microfono abierto"},

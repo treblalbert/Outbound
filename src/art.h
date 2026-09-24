@@ -92,6 +92,7 @@ enum ObjectKind : uint8_t {
     OB_HVAC, OB_VENT, OB_ANTENNA, OB_ROOF_HOLE, OB_DUCT,
     // on a wall
     OB_WINDOW, OB_WINDOW_BROKEN, OB_WINDOW_BOARDED, OB_POSTER, OB_GRAFFITI, OB_IVY, OB_AWNING, OB_SHOPFRONT,
+    OB_DOWNSPOUT,              // 0.12v: Tiles/Gutter-And-Downspout, drawn by the scene (pick: grey/rusty, into the ground/out on it)
     OB_COUNT
 };
 // `pick` chooses among the kind's art (colours, styles); `overgrown` 0 plain, 1 green,

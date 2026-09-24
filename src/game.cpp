@@ -8,6 +8,8 @@
 #include <ctime>
 #include <fstream>
 #include <map>
+#include <string>
+#include <unordered_map>
 #include <sstream>
 #ifdef _WIN32
 #include <direct.h>
@@ -504,6 +506,132 @@ void drawWorldTiles(World& w, Vec2 cam, float timeSec) {
 }
 
 // Walls are flat tiles; everything else is queued into the depth-sorted pass.
+// ---- barricades (0.12v): Objects/Buildable, wooden or reinforced, joined up with
+// their neighbours: straight runs, the four corners, the T, and gates that swing.
+static const Assets::Sprite* buildablePart(bool reinforced, const char* part) {
+    static std::unordered_map<std::string, const Assets::Sprite*> cache;
+    std::string key = reinforced ? std::string("objects/buildable/reinforced/reinforced_wooden-wall_") + part
+                                 : std::string("objects/buildable/wooden/wooden-wall_") + part;
+    auto it = cache.find(key);
+    if (it != cache.end()) return it->second;
+    const Assets::Sprite* sp = Assets::find(key);
+    cache[key] = sp && sp->valid() ? sp : nullptr;
+    return cache[key];
+}
+static const Assets::Sprite* buildableSwing(bool reinforced, bool opensHorizontal) {
+    static const Assets::Sprite* s[2][2] = {};
+    static bool looked = false;
+    if (!looked) {
+        looked = true;
+        s[0][1] = Assets::find("objects/buildable/wooden/animations/wooden-wall_gates-openingh_closingv");
+        s[0][0] = Assets::find("objects/buildable/wooden/animations/wooden-wall_gates-closingh_openingv");
+        s[1][1] = Assets::find("objects/buildable/reinforced/animation/reinforced-wooden-wall_gates-openingh_closingv");
+        s[1][0] = Assets::find("objects/buildable/reinforced/animation/reinforced-wooden-wall_gates-closingh_openingv");
+    }
+    return s[reinforced][opensHorizontal];
+}
+
+static bool isBarricade(const World& w, int x, int y) {
+    if (!w.inBounds(x, y)) return false;
+    int s = w.at(x, y).solid;
+    return s == S_BARRICADE || s == S_GATE || s == S_GATE_OPEN;
+}
+
+static void drawBarricadeTile(const World& w, int x, int y, const Tile& t, Color tint) {
+    bool reinf = barricadeDef(t.variant).reinforced;
+    // The barricade's own health shows as the others' do: darker as it is broken up.
+    for (const Barricade& b : G.prof.barricades)
+        if (w.homeTx + b.dx == x && w.homeTy + b.dy == y) {
+            float f = clampf(b.hp / std::max(1.0f, barricadeMaxHp(b)), 0.35f, 1.0f);
+            tint = b.hurtT > 0 ? pal(P_CORAL) : Color(f * 0.4f + 0.6f, f * 0.55f + 0.45f, f * 0.55f + 0.45f);
+            break;
+        }
+    int mask = (isBarricade(w, x - 1, y) ? 1 : 0) | (isBarricade(w, x + 1, y) ? 2 : 0) | (isBarricade(w, x, y - 1) ? 4 : 0) | (isBarricade(w, x, y + 1) ? 8 : 0);
+    float px = (float)x * TILE, py = (float)y * TILE;
+    Vec2 base(px + TILE * 0.5f, py + TILE);
+    auto put = [&](const Assets::Sprite* sp, float cx, int frame = 0) {
+        if (sp) sceneAdd(Art::Piece{sp, frame, false, 1.0f}, Vec2(cx, base.y), tint);
+    };
+    bool vertical = (mask & 12) && !(mask & 3);
+    if (t.solid != S_BARRICADE) {
+        float open = gateOpenness(x, y);
+        if (vertical) {
+            if (open > 0.02f) put(buildableSwing(reinf, false), base.x, std::min(6, (int)(open * 7)));
+            else put(buildablePart(reinf, "gate_vertical"), base.x);
+            // The posts it hangs between.
+            if (const Assets::Sprite* post = buildablePart(reinf, "vertical_for-gate"))
+                sceneAdd(Art::Piece{post, 0, false, 1.0f}, Vec2(base.x, py + post->frame(0).h - 2), tint);
+        } else {
+            if (open > 0.02f) put(buildableSwing(reinf, true), base.x, std::min(6, (int)(open * 7)));
+            else put(buildablePart(reinf, "gate_horizontal"), base.x);
+        }
+        return;
+    }
+    switch (mask & 15) {
+    case 2 | 8: put(buildablePart(reinf, "left-side_right&down-connect"), px + 10); break;
+    case 1 | 8: put(buildablePart(reinf, "right-side_left&down-connect"), px + 6); break;
+    case 2 | 4: put(buildablePart(reinf, "left-side_right&up-connect"), px + 10); break;
+    case 1 | 4: put(buildablePart(reinf, "right-side_left&up-connect"), px + 6); break;
+    case 1 | 2 | 8: put(buildablePart(reinf, "middle_right&left&down-connect"), base.x); break;
+    case 4: case 8: case 4 | 8: put(buildablePart(reinf, "vertical"), base.x); break;
+    case 0: case 1: case 2: case 1 | 2: put(buildablePart(reinf, "horizontal"), base.x); break;
+    default:
+        // Where more runs meet than the pack drew: the post and the planks crossing it.
+        put(buildablePart(reinf, "vertical"), base.x);
+        put(buildablePart(reinf, "horizontal"), base.x);
+        break;
+    }
+}
+
+// The compound's wire gates (Tiles/Wire-Fence): flat like the fence, swinging open
+// with the pack's opening and closing frames, locked or not.
+static void drawFenceGate(int x, int y, const Tile& t, Color tint) {
+    static std::unordered_map<int, float> last;   // was it opening or closing
+    bool lock = (t.variant & 1) != 0;
+    float px = (float)x * TILE, py = (float)y * TILE;
+    float open = gateOpenness(x, y);
+    int key = y * 4096 + x;
+    float before = last.count(key) ? last[key] : open;
+    last[key] = open;
+    if (open <= 0.02f) {
+        if (const Assets::Sprite* sp = Assets::find(lock ? "tiles/wire-fence/wire-fence_gate_lock" : "tiles/wire-fence/wire-fence_gate"))
+            R::frame(sp->frame(0), px, py, TILE, TILE, tint);
+        return;
+    }
+    bool closing = open < before;
+    std::string k = std::string("tiles/wire-fence/wire-fence_") + (closing ? "closing" : "opening") + (lock ? "" : "_no-lock");
+    const Assets::Sprite* sp = Assets::find(k);
+    if (!sp) return;
+    int n = sp->frameCount();
+    int fr = closing ? std::min(n - 1, (int)((1.0f - open) * n)) : std::min(n - 1, (int)(open * n));
+    const Assets::Frame& f = sp->frame(fr);
+    R::frame(f, std::floor(px + (TILE - f.w) * 0.5f), py + TILE - f.h, (float)f.w, (float)f.h, tint);
+}
+
+// A downspout (Tiles/Gutter-And-Downspout, 0.12v): one of the sheet's four drop pipes,
+// grey or rusty, straight into the ground or bent out over it; `base` is the bottom of
+// the wall it runs down. In the rain the bent ones pour (Downspout_Rainwater).
+static void drawDownspout(Vec2 base, int pick) {
+    static const Assets::Sprite* sheet = Assets::find("tiles/gutter-and-downspout");
+    static const Assets::Sprite* pour = Assets::find("objects/nature/flowers_mashrooms_other-nature-stuff/puddles-and-water-anim/animations/downspout_rainwater");
+    if (!sheet) return;
+    int col = pick & 3;
+    bool bent = (col & 1) != 0;
+    // Straight ones: rows 0-1 end in a foot at y 24. Bent ones: the elbow's mouth at y 40.
+    float top = bent ? 8.0f : 0.0f, bottom = bent ? 41.0f : 25.0f;
+    Assets::Frame f = sheet->frame(0).sub(col * 16.0f, top, 16, bottom - top);
+    // The foot of a straight one stands at the wall's bottom; a bent one's mouth sticks
+    // out a little onto the ground in front.
+    float x = std::floor(base.x - 8), y = std::floor(base.y + (bent ? 7.0f : 1.0f) - f.h);
+    R::frame(f, x, y, (float)f.w, (float)f.h);
+    float rain = Atmo::rainAmount();
+    if (bent && pour && rain > 0.15f) {
+        int fr = (int)(G.realTime * 10.0f + base.x * 0.13f) % pour->frameCount();
+        const Assets::Frame& pf = pour->frame(fr);
+        R::frame(pf, std::floor(base.x - pf.w * 0.5f), y + f.h - 3, (float)pf.w, (float)pf.h, Color(1, 1, 1, clampf(rain * 1.5f, 0, 1)));
+    }
+}
+
 void drawTileSolids(World& w, Vec2 cam, float timeSec) {
     int x0, y0, x1, y1;
     viewRange(w, cam, x0, y0, x1, y1, 5);
@@ -561,7 +689,8 @@ void drawTileSolids(World& w, Vec2 cam, float timeSec) {
                 case S_WALL_BRICK: case S_WALL_CONCRETE: case S_WALL_WOOD: case S_DOOR: hgt = 20; break;
                 case S_BUNKER: hgt = 16; break;
                 case S_CRATE: case S_SANDBAG: hgt = 10; break;
-                case S_FENCE: hgt = 7; break;
+                case S_FENCE: case S_FENCE_GATE: hgt = 7; break;
+                case S_BARRICADE: case S_GATE: hgt = 12; break;
                 default: break;
                 }
                 if (hgt > 0) R::shadowBox(px, py, px + TILE, py + TILE, hgt);
@@ -664,12 +793,26 @@ void drawTileSolids(World& w, Vec2 cam, float timeSec) {
                 else R::spriteRect(WALL_WOOD, px, py, TILE, TILE, tint);
                 break;
             }
+            case S_BARRICADE:
+            case S_GATE:
+            case S_GATE_OPEN:
+                drawBarricadeTile(w, x, y, t, tint);
+                break;
+            case S_FENCE_GATE:
+            case S_FENCE_GATE_OPEN:
+                drawFenceGate(x, y, t, tint);
+                break;
             default: {
+                // A fence runs on into its gates.
+                auto same = [&](int sx, int sy) {
+                    int o = w.at(sx, sy).solid;
+                    return o == t.solid || (t.solid == S_FENCE && (o == S_FENCE_GATE || o == S_FENCE_GATE_OPEN));
+                };
                 int mask = 0;
-                if (x > 0 && w.at(x - 1, y).solid == t.solid) mask |= 1;
-                if (x + 1 < w.w && w.at(x + 1, y).solid == t.solid) mask |= 2;
-                if (y > 0 && w.at(x, y - 1).solid == t.solid) mask |= 4;
-                if (y + 1 < w.h && w.at(x, y + 1).solid == t.solid) mask |= 8;
+                if (x > 0 && same(x - 1, y)) mask |= 1;
+                if (x + 1 < w.w && same(x + 1, y)) mask |= 2;
+                if (y > 0 && same(x, y - 1)) mask |= 4;
+                if (y + 1 < w.h && same(x, y + 1)) mask |= 8;
                 if (t.solid == S_WALL_WOOD || t.solid == S_WALL_CONCRETE) {
                     for (const Building& b : w.buildings) {
                         if (x < b.x0 || y < b.y0 || x >= b.x0 + b.w || y >= b.y0 + b.h) continue;
@@ -709,6 +852,7 @@ void drawTileSolids(World& w, Vec2 cam, float timeSec) {
             // Hangs on a front wall tile; shot away with it.
             int tx = World::toTile(p.pos.x), ty = World::toTile(p.pos.y - 1);
             if (!w.inBounds(tx, ty) || w.at(tx, ty).solid == S_NONE) continue;
+            if (p.variant == Art::OB_DOWNSPOUT) { drawDownspout(p.pos, p.frame & 63); continue; }
             Art::Piece dp = Art::object(p.variant, p.frame & 63, p.frame >> 6);
             if (dp.valid()) R::spriteAt(*dp.sprite, dp.frame, p.pos, R::Pivot::Bottom, 1, Color(), dp.flipX != p.flipX);
             continue;
@@ -1146,6 +1290,8 @@ static void writeProfile(std::ostream& o, const Profile& p) {
     for (int i = 0; i < DU_COUNT; i++) o << ' ' << p.defUp[i];
     o << "\nturrets " << p.turrets.size() << "\n";
     for (const Turret& t : p.turrets) o << t.dx << ' ' << t.dy << ' ' << t.type << ' ' << t.level << ' ' << t.hp << "\n";
+    o << "barricades " << p.barricades.size() << "\n";
+    for (const Barricade& b : p.barricades) o << b.dx << ' ' << b.dy << ' ' << b.type << ' ' << b.hp << "\n";
     // The dead are never written: dead is dead, even if they were still on the roster.
     int alive = 0;
     for (const Hireling& h : p.squad) alive += !h.dead && h.hp > 0;
@@ -1229,6 +1375,17 @@ static bool readProfile(std::istream& in, Profile& p, bool& hadTurrets) {
                 t.type = std::clamp(t.type, 0, TT_COUNT - 1);
                 t.level = std::clamp(t.level, 1, TURRET_MAX_LEVEL);
                 if ((int)p.turrets.size() < MAX_TURRETS) p.turrets.push_back(t);
+            }
+        }
+        else if (key == "barricades") {
+            size_t n = 0;
+            in >> n;
+            p.barricades.clear();
+            for (size_t i = 0; i < n; i++) {
+                Barricade b;
+                in >> b.dx >> b.dy >> b.type >> b.hp;
+                b.type = std::clamp(b.type, 0, BT_COUNT - 1);
+                if ((int)p.barricades.size() < MAX_BARRICADES) p.barricades.push_back(b);
             }
         }
         else if (key == "squad") {

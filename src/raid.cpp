@@ -18,6 +18,7 @@
 #include <ctime>
 #include <functional>
 #include <queue>
+#include <unordered_map>
 
 using namespace Sprites;
 
@@ -1796,6 +1797,9 @@ int pathCost(int x, int y) {
     case S_NONE: case S_DOOR_OPEN: return 10;
     case S_BOUNDARY: case S_BUNKER: case S_CAR: case S_CONTAINER: case S_FURNITURE: return -1;
     case S_TURRET: return 90;
+    // Barricades (0.12v): the tougher the wall, the further round it is worth going.
+    case S_BARRICADE: case S_GATE: return barricadeDef(t.variant).reinforced ? 160 : 70;
+    case S_GATE_OPEN: case S_FENCE_GATE_OPEN: return 10;
     default: break;
     }
     const SolidInfo& si = solidInfo(t.solid);
@@ -1862,6 +1866,78 @@ bool homeStep(Vec2 pos, int& bx, int& by) {
 
 void damageBase(float dmg);
 void damageHireling(Hireling& h, float dmg);
+
+// ---- barricades and gates (0.12v)
+Vec2 barricadePos(const Barricade& b) { return World::tileCenter(G.world.homeTx + b.dx, G.world.homeTy + b.dy); }
+int barricadeAtTile(int tx, int ty) {
+    const auto& bs = G.prof.barricades;
+    for (int i = 0; i < (int)bs.size(); i++)
+        if (G.world.homeTx + bs[i].dx == tx && G.world.homeTy + bs[i].dy == ty) return i;
+    return -1;
+}
+
+void damageBarricade(int index, float dmg) {
+    Barricade& b = G.prof.barricades[index];
+    if (b.hp <= 0) return;
+    b.hp -= dmg;
+    b.hurtT = 0.12f;
+    Vec2 c = barricadePos(b);
+    addParticles(c + Vec2(0, -4), 3, P_TAN, 15, 45, 0.2f, 0.5f);
+    sfxAt(Snd::tile_hit, c, G.player.pos, 0.35f, s_rng.range(0.6f, 0.8f));
+    if (b.hp > 0) return;
+    b.hp = 0;
+    int tx = World::toTile(c.x), ty = World::toTile(c.y);
+    if (G.world.inBounds(tx, ty)) { G.world.at(tx, ty).solid = S_NONE; G.world.updateMapPixel(tx, ty); }
+    addParticles(c, 16, P_TAN, 20, 90, 0.3f, 0.9f, true, 2);
+    addParticles(c, 8, P_ORANGE, 10, 50, 0.4f, 0.9f, false, 2);
+    sfxAt(Snd::tile_break, c, G.player.pos, 0.9f, 0.8f);
+    if (!s_sim) pushMessage(T1("A {0} was broken!", T(barricadeDef(b.type).name)), P_CORAL);
+}
+
+// Gates swing open when one of your side comes close and shut behind them - never
+// on someone standing in the way. The frame of the swing is kept per tile.
+std::unordered_map<int, float> s_gateT;
+float gateOpenAt(int tx, int ty) {
+    auto it = s_gateT.find(ty * G.world.w + tx);
+    if (it != s_gateT.end()) return it->second;
+    if (!G.world.inBounds(tx, ty)) return 0;
+    int s = G.world.at(tx, ty).solid;
+    return s == S_GATE_OPEN || s == S_FENCE_GATE_OPEN ? 1.0f : 0.0f;
+}
+
+void updateGates(float dt) {
+    World& w = G.world;
+    if (w.w <= 0) return;
+    std::vector<Vec2> friends;
+    for (const Target& t : s_targets) friends.push_back(t.pos);
+    friends.push_back(G.player.pos);
+    for (const Hireling* h : s_mercs) if (!h->dead) friends.push_back(h->pos);
+    const int R = BUILD_RADIUS + 2;
+    for (int y = w.homeTy - R; y <= w.homeTy + R; y++)
+        for (int x = w.homeTx - R; x <= w.homeTx + R; x++) {
+            if (!w.inBounds(x, y)) continue;
+            Tile& t = w.at(x, y);
+            bool fence = t.solid == S_FENCE_GATE || t.solid == S_FENCE_GATE_OPEN;
+            if (!fence && t.solid != S_GATE && t.solid != S_GATE_OPEN) continue;
+            Vec2 c = World::tileCenter(x, y);
+            bool want = false, inWay = false;
+            for (const Vec2& f : friends) {
+                float d = dist(f, c);
+                if (d < 26) want = true;
+                if (d < 11) inWay = true;
+            }
+            for (const Enemy& e : G.enemies)
+                if (!e.dead && dist(e.pos, c) < 11) { inWay = true; break; }
+            float& o = s_gateT.try_emplace(y * w.w + x, gateOpenAt(x, y)).first->second;
+            bool wasOpen = o >= 0.5f;
+            o = clampf(o + (want ? 3.0f : -3.0f) * dt, inWay && o >= 0.5f ? 0.5f : 0.0f, 1.0f);
+            bool open = o >= 0.5f;
+            if (open != wasOpen) {
+                t.solid = fence ? (open ? S_FENCE_GATE_OPEN : S_FENCE_GATE) : (open ? S_GATE_OPEN : S_GATE);
+                sfxAt(Snd::door, c, G.player.pos, 0.45f, fence ? 1.25f : 0.8f);
+            }
+        }
+}
 
 void damageTurret(int index, float dmg) {
     Turret& t = G.prof.turrets[index];
@@ -2308,7 +2384,8 @@ void updateZombie(size_t index, float dt) {
     float reach = zk.reach + 6;
     const Target* tt = e.ztarget == -2 ? targetOf(e.tslot) : nullptr;
     if (tt) { goal = tt->pos; reach = zk.reach; }
-    else if (e.ztarget >= 1000 && e.ztarget - 1000 < (int)p.turrets.size() && p.turrets[e.ztarget - 1000].hp > 0) { goal = turretPos(p.turrets[e.ztarget - 1000]); reach = zk.reach + 6; }
+    else if (e.ztarget >= 2000 && e.ztarget - 2000 < (int)p.barricades.size() && p.barricades[e.ztarget - 2000].hp > 0) { goal = barricadePos(p.barricades[e.ztarget - 2000]); reach = zk.reach + 9; }
+    else if (e.ztarget >= 1000 && e.ztarget < 2000 && e.ztarget - 1000 < (int)p.turrets.size() && p.turrets[e.ztarget - 1000].hp > 0) { goal = turretPos(p.turrets[e.ztarget - 1000]); reach = zk.reach + 6; }
     else if (e.ztarget >= 0 && e.ztarget < (int)s_mercs.size() && !s_mercs[e.ztarget]->dead) { goal = s_mercs[e.ztarget]->pos; reach = zk.reach; }
     else e.ztarget = -1;
 
@@ -2319,6 +2396,7 @@ void updateZombie(size_t index, float dt) {
             e.meleeCd = zk.attackCd;
             sfxAt(Snd::melee, e.pos, pl.pos, 0.5f, s_rng.range(0.8f, 1.1f));
             if (e.ztarget == -2) hurtSlot(e.tslot, dmg, "Torn apart by the horde.");
+            else if (e.ztarget >= 2000) damageBarricade(e.ztarget - 2000, dmg);
             else if (e.ztarget >= 1000) damageTurret(e.ztarget - 1000, dmg);
             else if (e.ztarget >= 0) damageHireling(*s_mercs[e.ztarget], dmg);
             else damageBase(dmg);
@@ -2345,6 +2423,10 @@ void updateZombie(size_t index, float dt) {
                 sfxAt(Snd::tile_hit, nc, pl.pos, 0.35f, s_rng.range(0.7f, 0.9f));
             }
             return;
+        }
+        if (next.solid == S_BARRICADE || next.solid == S_GATE) {
+            int bi = barricadeAtTile(nx, ny);
+            if (bi >= 0) e.ztarget = 2000 + bi;
         }
         if (next.solid == S_TURRET) {
             for (int i = 0; i < (int)p.turrets.size(); i++)
@@ -3933,6 +4015,7 @@ static void beginRaid(bool resume) {
     World::withCrypts = true;
     G.world.generate(seed, p.day);
     placeTurretsInWorld(G.world);
+    s_gateT.clear();
     G.enemies.clear();
     G.bullets.clear();
     G.grenades.clear();
@@ -4134,6 +4217,15 @@ void raid_saveState() {
 namespace {
 // Everything in the world that is not a player: the host (and solo) runs this; a
 // guest only mirrors it.
+// Everyone else's feet in the puddles (0.12v).
+void othersSplash() {
+    if (localCrypt() >= 0) return;
+    for (const Enemy& e : G.enemies)
+        if (!e.dead && lengthSq(e.pos - e.lastPos) > 0.01f) Atmo::otherStep(G.world, e.pos + Vec2(0, 4), (uint32_t)e.netId * 2654435761u);
+    for (const Hireling* h : s_mercs)
+        if (!h->dead) Atmo::otherStep(G.world, h->pos + Vec2(0, 5), (uint32_t)(uintptr_t)h);
+}
+
 void worldSim(float dt) {
     buildTargets();
     rebuildMercs();
@@ -4146,6 +4238,9 @@ void worldSim(float dt) {
     G.enemies.erase(std::remove_if(G.enemies.begin(), G.enemies.end(), [](const Enemy& e) { return e.dead; }), G.enemies.end());
     crowdZombies();
     updateTurrets(dt);
+    for (Barricade& b : G.prof.barricades) b.hurtT -= dt;
+    updateGates(dt);
+    othersSplash();
     updateSquad(dt);
     buryHirelings();
     // Nobody stands inside a car that drove into them.
@@ -4175,6 +4270,9 @@ void guestSim(float dt) {
     }
     s_mercViews.erase(std::remove_if(s_mercViews.begin(), s_mercViews.end(), [](const MercView& m) { return m.seen > 1.0f; }), s_mercViews.end());
     for (Turret& t : G.prof.turrets) { t.flashT -= dt; t.beamT -= dt; }
+    for (Barricade& b : G.prof.barricades) b.hurtT -= dt;
+    updateGates(dt);
+    othersSplash();
 }
 }  // namespace
 
@@ -5107,7 +5205,7 @@ void drawMechanicShop() {
         }
     }
     R::text(T("Parts are taken from your pockets."), x + 6, y + h - 12, pal(P_LAVENDER));
-    if (UI::button(x + w - 66, y + h - 20, 60, 15, T("Close"))) G.panel = Panel::None;
+    if (UI::button(x + w - 66, y + h - 20, 60, 15, T("Close")) || UI::panelClose()) G.panel = Panel::None;
 }
 
 // Aim assist's target (0.12v): four corners closing in on it as the lock settles.
@@ -5946,12 +6044,13 @@ void drawPausePanel() {
         float w = 220, h = 84, x = std::floor(W / 2 - w / 2), y = std::floor(H / 2 - h / 2);
         UI::panel(x, y, w, h, T("ABANDON RAID?"));
         R::text(T("You will lose everything you carry\nand restart the current day."), x + 10, y + 22, pal(P_BEIGE));
-        if (UI::button(x + 10, y + 56, 95, 16, T("Abandon"), true, P_CORAL)) {
+        int yn = UI::yesNo(x + w - 33, y + 4);
+        if (UI::button(x + 10, y + 56, 95, 16, T("Abandon"), true, P_CORAL) || yn == 1) {
             G.panel = Panel::None;
             s_deathCause = "You abandoned the raid.";
             finishDeath();
         }
-        if (UI::button(x + w - 105, y + 56, 95, 16, T("Cancel"))) G.panel = Panel::Pause;
+        if (UI::button(x + w - 105, y + 56, 95, 16, T("Cancel")) || yn == 2) G.panel = Panel::Pause;
     }
 }
 
@@ -7242,6 +7341,7 @@ std::string raid_coopOffscreenHorde() {
         World::withCrypts = true;
         G.world.generate(seed, p.day);
         placeTurretsInWorld(G.world);
+    s_gateT.clear();
         G.enemies.clear();
         G.bullets.clear();
         s_worldLive = false;
@@ -7718,6 +7818,7 @@ std::string raid_missedHorde() {
     World::withCrypts = true;
     G.world.generate(todaySeed(), p.day);
     placeTurretsInWorld(G.world);
+    s_gateT.clear();
     G.enemies.clear();
     G.bullets.clear();
     G.nightFallen = false;
@@ -7788,3 +7889,5 @@ void raid_localEnded() {
     s_localOut = false;
     R::setZoom(1);
 }
+
+float gateOpenness(int tx, int ty) { return gateOpenAt(tx, ty); }

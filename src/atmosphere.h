@@ -29,6 +29,8 @@ void drawGround(const World& w, Vec2 cam);
 void drawRain(const World& w, Vec2 cam);
 // Walking through a puddle kicks up a splash.
 void footstep(const World& w, Vec2 feet, bool moving, float dt);
+// Anyone else's feet (the dead, mercs, other players): a small splash in a puddle.
+void otherStep(const World& w, Vec2 feet, uint32_t who);
 // How much direct sun gets through the weather right now: 1 clear .. ~0.1 storm.
 float sunlight();
 // How hard it is raining right now, 0 dry .. 1 a downpour (0.11v: the ambience).

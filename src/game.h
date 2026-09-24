@@ -74,6 +74,28 @@ struct Turret {
     int target = -1;
 };
 
+// ---- barricades (0.12v): walls and gates built round the hatch from the pack's
+// Objects/Buildable art. The dead have to break them to get past.
+enum BarricadeType : int { BT_WOOD_WALL, BT_WOOD_GATE, BT_REINF_WALL, BT_REINF_GATE, BT_COUNT };
+struct BarricadeDef {
+    const char* name;
+    const char* desc;
+    const char* icon;       // UI/Inventory/Objects
+    int cost, hp;
+    bool gate, reinforced;
+    int unlockHordes;       // hordes repelled before it can be built
+};
+const BarricadeDef& barricadeDef(int type);
+struct Barricade {
+    int dx = 0, dy = 0;     // tile offset from the hatch
+    int type = BT_WOOD_WALL;
+    float hp = -1;          // -1 = full; 0 = broken until repaired
+    float hurtT = 0;        // runtime
+};
+constexpr int MAX_BARRICADES = 60;
+float barricadeMaxHp(const Barricade& b);
+int barricadeRepairCost(const Barricade& b);
+
 enum DefenseUpgrade { DU_FIREPOWER, DU_RATE, DU_PLATING, DU_FORTIFY, DU_BOUNTY, DU_COUNT };
 const UpgradeDef& defenseUpgradeDef(int id);
 int defenseUpgradeCost(int id, int currentLevel);
@@ -280,6 +302,7 @@ struct Profile {
     // turret unlocks. nextHordeAt is on the absolute clock (see absMinutes), so a
     // horde can be scheduled days ahead.
     std::vector<Turret> turrets;
+    std::vector<Barricade> barricades;   // 0.12v
     bool turretUnlocked[TT_COUNT] = {true, false, false, false, false};
     int defUp[DU_COUNT] = {};
     float baseHp = -1;           // -1 = full
@@ -511,7 +534,9 @@ void defense_update(float dt);
 void defense_draw();
 // One change to the shared defenses (never touches money). a/b/c: DO_BUILD type,dx,dy;
 // DO_UNLOCK type; DO_RESEARCH upgrade id; DO_UPGRADE/DO_REPAIR/DO_SELL -,dx,dy.
-enum DefenseOp { DO_BUILD, DO_UNLOCK, DO_REPAIR_ALL, DO_RESEARCH, DO_UPGRADE, DO_REPAIR, DO_SELL, DO_REPAIR_BASE };
+// DO_BARR_BUILD type,dx,dy; DO_BARR_SELL/DO_BARR_REPAIR -,dx,dy (0.12v).
+enum DefenseOp { DO_BUILD, DO_UNLOCK, DO_REPAIR_ALL, DO_RESEARCH, DO_UPGRADE, DO_REPAIR, DO_SELL, DO_REPAIR_BASE,
+                 DO_BARR_BUILD, DO_BARR_SELL, DO_BARR_REPAIR, DO_BARR_REPAIR_ALL };
 bool defense_apply(int op, int a, int b, int c);
 
 // The world for today's layout, shared by the raid and the defense editor.
@@ -523,6 +548,8 @@ void placeTurretsInWorld(World& w);
 std::string raid_missedHorde();
 // Primitive-drawn turret art, shared by the raid and the defense editor.
 void drawTurret(const Turret& t, Vec2 tileCenter, float alpha);
+// How far open a gate tile is, 0..1 (raid.cpp keeps it moving).
+float gateOpenness(int tx, int ty);
 
 // ---- shared helpers -------------------------------------------------------
 // What you wake up holding after dying (or after abandoning a raid): nothing you

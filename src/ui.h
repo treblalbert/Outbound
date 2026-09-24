@@ -1,6 +1,7 @@
 #pragma once
 #include "core.h"
 #include "items.h"
+#include "assets.h"
 #include <string>
 
 constexpr float SLOT = 20;
@@ -26,6 +27,25 @@ bool slider(float x, float y, float w, float h, float& value);  // draggable 0..
 bool textField(float x, float y, float w, float h, std::string& text, bool& focused, int maxLen);
 // Draws an item icon centred in a box, preferring the art pack over the built-in art.
 void itemIcon(int itemId, float x, float y, float box, Color tint = Color());
+
+// ---- the art pack's UI skin (0.12v)
+const Assets::Sprite* skin(const char* key);   // "ui/<key>", or nullptr
+// A frame cut in nine: corners as drawn, edges repeated (or stretched), middle stretched.
+void nine(const Assets::Frame& f, float x, float y, float w, float h, int l, int t, int r, int b, Color c = Color(), bool repeatEdges = true);
+bool nineSprite(const char* key, float x, float y, float w, float h, int l, int t, int r, int b, Color c = Color(), bool repeatEdges = true);
+bool skinSprite(const char* key, float x, float y, int frame = 0, Color c = Color());   // at its own size
+void textOutline(const std::string& s, float x, float y, Color c, Color ring);
+void subPanel(float x, float y, float w, float h, float scroll = -1);   // the lighter sheet, for a list
+bool closeBox(float x, float y);                                        // the inventory's X
+bool panelClose();                                                      // that X on the last titled panel
+// The main menu's lettered buttons ("play", "load", "save", "settings", "quit").
+bool menuButton(float x, float y, float w, float h, const char* art, const std::string& label, bool enabled = true);
+int yesNo(float x, float y);                                            // 1 yes, 2 no (the tick and the cross)
+// A crafting line: result = inputs (or result < inputs, an upgrade). Returns its width.
+float recipe(float x, float y, int result, Color resultTint, const int* ins, const int* counts, int n, bool upgrade);
+bool checkbox(float x, float y, bool& on, const std::string& label = "", int labelColor = P_LAVENDER);
+// The pack's mouse pointer, drawn by endFrame when the system one is hidden.
+void setCursor(bool drawn);
 
 // ---- controller navigation
 // Buttons, item slots and sliders register themselves as they are drawn; anything
