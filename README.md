@@ -14,10 +14,10 @@ first launch, changeable any time from the main menu).
 Needs the Steamworks SDK unpacked in `external/sdk` (for co-op) and these MSYS2 packages:
 
 ```
-pacman -S mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-glfw mingw-w64-ucrt-x86_64-openal
+pacman -S mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-glfw mingw-w64-ucrt-x86_64-openal mingw-w64-ucrt-x86_64-libvorbis
 ```
 
-Then either:
+(MSYS2 installed in `C:\msys64`, which `build.bat` expects.) Then either:
 
 ```
 build.bat            :: full build into bin\Outbound.exe (+ DLLs and every asset it uses)

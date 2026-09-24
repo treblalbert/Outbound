@@ -7249,12 +7249,12 @@ void drawNetPlayers(uint8_t where) {
     }
 }
 
-void drawNetPlayerTags(uint8_t where, Vec2 cam) {
+void drawNetPlayerTags(uint8_t where, Vec2 cam, bool includeSelf) {
     (void)cam;
     if (!Coop::active() || G.prof.rivals) return;   // Rivals: a stranger is a stranger
     for (int i = 0; i < Coop::MAX_PLAYERS; i++) {
         const Coop::NetPlayer& np = Coop::player(i);
-        if (i == mySlot() || !np.used || np.where != where) continue;
+        if ((i == mySlot() && !includeSelf) || !np.used || np.where != where) continue;
         if (where == Coop::W_RAID && np.ride >= 0) continue;   // the car carries their name
         int col = Coop::colorPal(i);
         R::textShadow(np.name, std::floor(np.pos.x - R::textWidth(np.name) / 2), np.pos.y - 26, pal(col));
@@ -7301,3 +7301,26 @@ std::string raid_missedHorde() {
     G.particles.clear();
     return s_hordeNote;
 }
+
+// ---- local co-op seats outside (0.12v) ------------------------------------------------
+// The raid's own per-player state is not split by seat yet, so a seat's turn outside
+// shares it: these keep local co-op linking and safe until that is done.
+void raid_swapSeat(int seat) { (void)seat; }
+
+// A player joined outside: stand them on free ground beside the one they joined next to.
+void raid_seatJoin(Vec2 near) {
+    Vec2 at = near;
+    for (int i = 0; i < 12; i++) {
+        Vec2 c = near + fromAngle(i * 0.52f) * 16.0f;
+        if (!G.world.collides(c.x, c.y, 5)) { at = c; break; }
+    }
+    G.player.pos = at;
+    if (G.prof.hp <= 0) G.prof.hp = G.prof.maxHp();
+}
+
+void raid_seatLeave() {}
+
+// Nobody waits out a bleed-out apart from the others yet.
+bool raid_localOut() { return false; }
+
+void raid_localEnded() {}
