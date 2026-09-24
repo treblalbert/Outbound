@@ -36,6 +36,8 @@ bool nineSprite(const char* key, float x, float y, float w, float h, int l, int 
 bool skinSprite(const char* key, float x, float y, int frame = 0, Color c = Color());   // at its own size
 void textOutline(const std::string& s, float x, float y, Color c, Color ring);
 void subPanel(float x, float y, float w, float h, float scroll = -1);   // the lighter sheet, for a list
+// A panel with the pack's scroll bar down its right side, its box `scroll` (0..1) down.
+void panelScroll(float x, float y, float w, float h, const std::string& title, float scroll);
 bool closeBox(float x, float y);                                        // the inventory's X
 bool panelClose();                                                      // that X on the last titled panel
 // The main menu's lettered buttons ("play", "load", "save", "settings", "quit").

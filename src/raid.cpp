@@ -5380,18 +5380,33 @@ void drawMechanicShop() {
         // Price: money, and the parts he wants, counted from your pockets.
         R::text(T("Price") + ":  $" + std::to_string(m.price), rx, sy, pal(p.money >= m.price ? P_YGREEN : P_CORAL));
         sy += 11;
-        float mx = rx;
-        for (const CarMat& mt : m.mats) {
-            if (mt.item == IT_NONE) continue;
-            int have = pocketCount(mt.item);
-            UI::itemIcon(mt.item, mx, sy - 2, 12);
-            std::string t = std::to_string(std::min(have, mt.count)) + "/" + std::to_string(mt.count);
-            R::text(t, mx + 14, sy, pal(have >= mt.count ? P_YGREEN : P_CORAL));
-            if (UI::hover(mx, sy - 2, 14 + R::textWidth(t), 12)) UI::tooltip(T(itemDef(mt.item).name), T("Found out in the world. Carried in your pockets."));
-            mx += 22 + R::textWidth(t);
+        // The parts as a crafting line (UI/Crafting, 0.12v): the car = its parts, each
+        // cell with how many; what you have of each written under it.
+        int ins[CAR_MAX_MATS], counts[CAR_MAX_MATS], n = 0;
+        for (const CarMat& mt : m.mats)
+            if (mt.item != IT_NONE && n < CAR_MAX_MATS) { ins[n] = mt.item; counts[n] = mt.count; n++; }
+        if (n == 0) {
+            R::text(T("No parts needed for this one."), rx, sy, pal(P_LAVENDER));
+            sy += 13;
+        } else {
+            float sw = UI::recipe(rx, sy - 2, IT_NONE, Color(0, 0, 0, 0), ins, counts, n, false);
+            // The car itself, small, in the result's cell.
+            if (const Assets::Sprite* cs = carSprite(mi, s_shopColor)) {
+                const Assets::Frame& f = cs->frame(carFrame(-PI / 2 + 0.3f));
+                float sc = std::min(15.0f / f.w, 15.0f / f.h);
+                R::frame(f, std::floor(rx + 3 + (15 - f.w * sc) / 2), std::floor(sy + 1 + (15 - f.h * sc) / 2), f.w * sc, f.h * sc);
+            }
+            // Which cell is which part: the strips put the inputs after the result.
+            float mx = rx + sw + 6;
+            for (int i = 0; i < n; i++) {
+                int have = pocketCount(ins[i]);
+                std::string t = std::to_string(std::min(have, counts[i])) + "/" + std::to_string(counts[i]);
+                R::text(t, mx, sy + 5, pal(have >= counts[i] ? P_YGREEN : P_CORAL));
+                if (UI::hover(mx, sy + 3, R::textWidth(t), 10)) UI::tooltip(T(itemDef(ins[i]).name), T("Found out in the world. Carried in your pockets."));
+                mx += R::textWidth(t) + 6;
+            }
+            sy += 24;
         }
-        if (mx == rx) R::text(T("No parts needed for this one."), rx, sy, pal(P_LAVENDER));
-        sy += 13;
         // The colour.
         R::text(T("Colour"), rx, sy + 2, pal(P_LAVENDER));
         for (int c = 0; c < CAR_COLORS; c++) {
@@ -5786,6 +5801,8 @@ static void drawSeatCard(int k, float x, float y, float w) {
     else hudArt(fullnessIcon(true, true, hpFrac), hx, hy);
     R::text(std::to_string((int)std::ceil(p.hp)), hx + 56, hy + 2, pal(P_CORAL));
     UI::bar(hx + 11, hy + 11, 40, 2, pl.stamina / p.maxStamina(), P_YGREEN);
+    // The small drumstick for stamina (0.12v), tucked under the heart.
+    hudArt(fullnessIcon(false, true, pl.stamina / p.maxStamina()), hx + 1, hy + 8);
     if (!p.armor.empty()) UI::bar(hx + 11, hy + 14, 40, 2, p.armor.data / float(itemDef(p.armor.id).param), P_BLUE);
     if (s_downT >= 0) {
         bool on = std::fmod(G.realTime, 0.8f) < 0.5f;
@@ -6039,6 +6056,27 @@ void drawHUD() {
         if (!w.empty() && weaponDef(w.id) && w.data == 0 && G.player.reloadT <= 0)
             Prompt::label(Prompt::Reload, T("Reload"), hx, hy, pal(P_CORAL, 0.6f + 0.4f * std::sin(G.realTime * 6.0f)));
     }
+        // The quick-access bar (UI/Inventory/Quick-Access-Inventory, 0.12v) along the
+        // bottom: both guns (the one in your hands chosen), then what you throw, heal
+        // with and swing, with how many.
+        if (const Assets::Sprite* qa = Assets::find("ui/inventory/quick-access-inventory")) {
+            float qx = std::floor(W / 2 - qa->w / 2.0f), qy = H - qa->h - 4;
+            hudFade(HUD_WEAPON, qx, qy, (float)qa->w, (float)qa->h);
+            R::frame(qa->frame(0), qx, qy, (float)qa->w, (float)qa->h);
+            const int ids[6] = {p.weapons[0].id, p.weapons[1].id, IT_GRENADE, IT_BANDAGE, IT_MEDKIT, IT_BAT};
+            for (int i = 0; i < 6; i++) {
+                float cx = qx + i * 21.0f;
+                if (i < 2 && i == p.curWeapon && !p.weapons[i].empty()) hudArt("inventory/inventory-chosen", cx, qy);
+                int id = ids[i];
+                if (id == IT_NONE) continue;
+                int n = i < 2 ? 1 : countInSlots(p.inv, id, cap);
+                UI::itemIcon(id, cx + 2, qy + 2, 15, n > 0 ? Color() : Color(1, 1, 1, 0.3f));
+                if (i >= 2 && n > 0 && id != IT_BAT) {
+                    std::string c = std::to_string(n);
+                    R::textShadow(c, cx + 18 - R::textWidth(c), qy + 11, pal(P_WHITE));
+                }
+            }
+        }
     }   // !driving
 
     // Minimap.

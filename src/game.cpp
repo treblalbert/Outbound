@@ -1000,6 +1000,17 @@ void drawTileSolids(World& w, Vec2 cam, float timeSec) {
         bool empty = c.searched && std::all_of(c.items.begin(), c.items.end(), [](const Item& i) { return i.empty(); });
         Color ct = empty ? Color(0.65f, 0.65f, 0.7f) : Color();
         Art::Piece art = c.kind == CK_CORPSE ? Art::corpse(c.variant) : Art::containerArt(c.kind, c.variant);
+        // Something dropped on its own (a bag of one kind of thing) lies there as itself.
+        if (c.kind == CK_BAG && !empty) {
+            int only = IT_NONE;
+            bool one = true;
+            for (const Item& i : c.items)
+                if (!i.empty()) { if (only == IT_NONE) only = i.id; else if (i.id != only) one = false; }
+            if (one && only != IT_NONE) {
+                Art::Piece pk = Art::pickable(only);
+                if (pk.valid()) { sceneAdd(pk, c.pos + Vec2(0, 4), ct); sceneNoReflect(); continue; }
+            }
+        }
         if (art.valid()) {
             sceneAdd(art, c.pos + Vec2(0, 4), ct);
             sceneNoReflect();
@@ -1384,6 +1395,8 @@ bool save_game() {
     if (!o) return false;
     writeProfile(o, G.prof);
     o.close();
+    // Which slot was played last (0.12v): the main menu's Load picks it back up.
+    if (std::ofstream l(dataPath("saves/last_slot.txt")); l) l << G.saveSlot << "\n";
     if (Coop::host()) Coop::saveGuests();
     persistSaves();
     return true;
@@ -1607,6 +1620,13 @@ bool profileFromText(const std::string& text, Profile& out) {
     std::istringstream in(text);
     bool hadTurrets = false;
     return readProfile(in, out, hadTurrets);
+}
+
+int last_slot() {
+    std::ifstream in(dataPath("saves/last_slot.txt"));
+    int s = -1;
+    if (!(in >> s) || s < 0 || s >= SAVE_SLOTS || !save_exists(s)) return -1;
+    return s;
 }
 
 bool load_game(int slot) {

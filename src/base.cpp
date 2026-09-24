@@ -1150,9 +1150,6 @@ void panelTrader(float W, float H) {
     float lw = 252, lh = 18 + SHOP_PER_PAGE * 20 + 44;
     float invW = 6 * SLOT + 12;
     float x = std::floor(W / 2 - (lw + 8 + invW) / 2), y = std::floor(H / 2 - 124);
-    UI::panel(x, y, lw, lh, T("TRADER - BUY"));
-    std::string money = "$" + std::to_string(p.money);
-    R::text(money, x + lw - 6 - R::textWidth(money), y + 4, pal(P_YGREEN));
 
     // Hardcore: the map, the home beacon and the team radio are for sale until bought,
     // at the top of the list (as -1 - HardcoreUnlock).
@@ -1165,6 +1162,11 @@ void panelTrader(float W, float H) {
         if (p.day >= SHOP[i].minDay) visible.push_back(i);
     int pages = std::max(1, ((int)visible.size() + SHOP_PER_PAGE - 1) / SHOP_PER_PAGE);
     G.traderPage = std::clamp(G.traderPage, 0, pages - 1);
+    // Its scroll box shows which page of the stock you are on (0.12v).
+    if (pages > 1) UI::panelScroll(x, y, lw, lh, T("TRADER - BUY"), G.traderPage / float(pages - 1));
+    else UI::panel(x, y, lw, lh, T("TRADER - BUY"));
+    std::string money = "$" + std::to_string(p.money);
+    R::text(money, x + lw - (pages > 1 ? 16 : 6) - R::textWidth(money), y + 4, pal(P_YGREEN));
     for (int row = 0; row < SHOP_PER_PAGE; row++) {
         int vi = G.traderPage * SHOP_PER_PAGE + row;
         if (vi >= (int)visible.size()) break;
@@ -1180,7 +1182,7 @@ void panelTrader(float W, float H) {
             R::text("$" + std::to_string(price) + "  " + T("today only"), x + 30, ry + 11, pal(p.money >= price ? P_YGREEN : P_CORAL));
             if (UI::hover(x + 6, ry, lw - 72, 18))
                 UI::tooltip(T("Dungeon locator"), T("For today: an arrow at the edge of your screen points to the nearest catacomb, and the map shows where every one of them is."), P_ORANGE);
-            if (UI::button(x + lw - 62, ry + 3, 56, 14, T("Buy"), p.money >= price)) {
+            if (UI::button(x + lw - 70, ry + 3, 56, 14, T("Buy"), p.money >= price)) {
                 p.money -= price;
                 p.locatorDay = p.day;
                 Audio::play(Snd::sell, 0.7f, 0.9f);
@@ -1206,7 +1208,7 @@ void panelTrader(float W, float H) {
             R::text(T(hd.name), x + 30, ry + 3, pal(P_CORAL));
             R::text("$" + std::to_string(hd.cost) + "  " + T("Hardcore"), x + 30, ry + 11, pal(p.money >= hd.cost ? P_YGREEN : P_CORAL));
             if (UI::hover(x + 6, ry, lw - 72, 18)) UI::tooltip(T(hd.name), T(hd.desc), P_CORAL);
-            if (UI::button(x + lw - 62, ry + 3, 56, 14, T("Buy"), p.money >= hd.cost)) {
+            if (UI::button(x + lw - 70, ry + 3, 56, 14, T("Buy"), p.money >= hd.cost)) {
                 p.money -= hd.cost;
                 p.hcUnlock[id] = true;
                 Audio::play(Snd::sell, 0.7f, 0.9f);
@@ -1222,7 +1224,7 @@ void panelTrader(float W, float H) {
         if (e.count > 1) name += " x" + std::to_string(e.count);
         R::text(name, x + 30, ry + 3, pal(P_WHITE));
         R::text("$" + std::to_string(e.price), x + 30, ry + 11, pal(p.money >= e.price ? P_YGREEN : P_CORAL));
-        if (UI::button(x + lw - 62, ry + 3, 56, 14, T("Buy"), p.money >= e.price)) {
+        if (UI::button(x + lw - 70, ry + 3, 56, 14, T("Buy"), p.money >= e.price)) {
             if (giveItem(preview)) {
                 p.money -= e.price;
                 Audio::play(Snd::sell, 0.5f, 0.8f);

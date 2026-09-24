@@ -154,6 +154,18 @@ void panel(float x, float y, float w, float h, const std::string& title) {
     }
 }
 
+// A panel whose contents scroll or page (UI/Inventory/Inventory_1_Scrollbar): the
+// scroll box sits `scroll` (0..1) of the way down its bar.
+void panelScroll(float x, float y, float w, float h, const std::string& title, float scroll) {
+    panel(x, y, w, h, title);
+    if (w < 24 || h < 40 || !nineSprite("inventory/inventory_1_scrollbar", x + w - 12, y, 12, h, 1, 6, 9, 6, Color(), true)) return;
+    if (const Assets::Sprite* s = skin("inventory/inventory_scrollbox_1")) {
+        const Assets::Frame& f = s->frame(0);
+        float top = y + (title.empty() ? 7 : 17), travel = std::max(0.0f, y + h - 7 - f.h - top);
+        R::frame(f, std::floor(x + w - 7), std::floor(top + travel * clampf(scroll, 0, 1)), (float)f.w, (float)f.h);
+    }
+}
+
 // The lighter sheet (the crafting menu's), for a list inside a panel. With `scroll`
 // (0..1, or <0 for none) its scroll bar's box sits that far down the bar.
 void subPanel(float x, float y, float w, float h, float scroll) {

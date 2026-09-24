@@ -599,6 +599,7 @@ std::string coopGuestDir();
 void openUrl(const std::string& url);
 bool save_game();
 bool load_game(int slot);
+int last_slot();           // the slot played last, if its save is still there; -1 if not
 bool save_exists(int slot);
 bool delete_save(int slot);
 bool any_save_exists();

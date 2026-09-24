@@ -115,6 +115,8 @@ inline uint8_t objectFrame(int pick, int overgrown) { return (uint8_t)((pick & 6
 // The art of any prop that stands in the way with its pixels (cars, wrecks, objects).
 Piece propArt(const ::WorldProp& p);
 Piece stump();
+// Objects/Pickable (0.12v): how one kind of item looks lying on the ground, or nothing.
+Piece pickable(int itemId);
 // Tiles/Iron-Fence (0.12v): a wrought-iron railing joined up by `neighbourMask`
 // (1 left, 2 right, 4 up, 8 down).
 Piece ironFence(int neighbourMask);

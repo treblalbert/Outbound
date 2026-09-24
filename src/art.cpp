@@ -297,7 +297,7 @@ void loadProps() {
     g_wallMetal = Assets::search({"buildable/reinforced/reinforced_wooden-wall_middle"});
 
     // Loot containers by kind (see LootKind order used by the world).
-    const char* crates[] = {"objects/pickable/ammo-crate_green", "objects/pickable/ammo-crate_blue", "objects/pallet_1"};
+    const char* crates[] = {"objects/pickable/ammo-crate_green", "objects/pickable/ammo-crate_blue", "objects/pickable/ammo-crate_red", "objects/pallet_1"};
     for (const char* c : crates) add(g_containers[1], c);
     const char* lockers[] = {"objects/refrigerator", "objects/vending-machine_blue", "objects/vending-machine_red"};
     for (const char* c : lockers) add(g_containers[2], c);
@@ -1101,6 +1101,27 @@ Piece groundDeco(uint8_t code, uint8_t tone) {
     }
 }
 Piece stump() { return piece(g_stump); }
+
+Piece pickable(int itemId) {
+    const char* key = nullptr;
+    switch (baseWeapon(itemId)) {
+    case IT_AMMO_LIGHT: key = "bullet-box_1_blue"; break;
+    case IT_AMMO_SHELL: key = "bullet-box_1_red"; break;
+    case IT_AMMO_RIFLE: key = "bullet-box_1_green"; break;
+    case IT_AMMO_SNIPER: key = "ammo-crate_blue"; break;
+    case IT_ROCKET: key = "ammo-crate_red"; break;
+    case IT_BANDAGE: key = "bandage"; break;
+    case IT_BAT: key = "bat"; break;
+    case IT_FOOD: key = "canned-food"; break;
+    case IT_SOUP: key = "canned-soup"; break;
+    case IT_PISTOL: case IT_REVOLVER: key = "pistol"; break;
+    case IT_SHOTGUN: key = "shotgun"; break;
+    case IT_SMG: case IT_RIFLE: case IT_CARBINE: case IT_SNIPER: case IT_LAUNCHER: key = "gun"; break;
+    default: break;
+    }
+    if (!key) return Piece();
+    return piece(Assets::find(std::string("objects/pickable/") + key));
+}
 
 Piece groundDecoTrodden(uint8_t code, uint8_t tone) {
     if ((code >> 5) != DK_TUFT) return Piece();

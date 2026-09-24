@@ -22,6 +22,7 @@ using namespace Sprites;
 namespace {
 float s_menuClock = 9 * 60;
 float s_creditsScroll = 0;
+int s_loadSlot = -1;           // the main menu's Load, done at the start of the next update
 bool s_langPicker = false;     // language panel open over the main menu
 bool s_introThenPlay = false;  // the intro was opened by starting a new game
 int s_confirmSlot = -1;        // slot waiting on a confirmation
@@ -265,7 +266,7 @@ void drawLobby(float W, float H) {
         float cw = 300, ch = 110, cx = std::floor(W / 2 - cw / 2), cy = std::floor(H / 2 - ch / 2);
         UI::panel(cx, cy, cw, ch, T("YOUR CHARACTER"));
         drawCharacterEditor(cx + 10, cy + 20, cw - 20);
-        if (UI::button(cx + 10, cy + ch - 22, 90, 16, T("Save"), true, P_YGREEN)) {
+        if (UI::menuButton(cx + 10, cy + ch - 25, 90, 21, "save", T("Save"))) {
             Coop::setIdentity(s_charName, s_charShirt);
             s_charEdit = s_charFocus = false;
             Input::setCapture(false);
@@ -641,6 +642,16 @@ static void splashDraw(float W, float H) {
 int menu_navContext() { return (s_langPicker ? 1 : 0) + (s_confirmSlot >= 0 ? 2 : 0) + (s_coopPick ? 4 : 0); }
 
 void menu_update(float dt) {
+    // Load (the main menu's Continue): into the save played last.
+    if (s_loadSlot >= 0) {
+        int slot = s_loadSlot;
+        s_loadSlot = -1;
+        if (load_game(slot)) {
+            if (G.prof.inRaid) raid_resume();
+            else base_enter(false);
+            return;
+        }
+    }
     if (G.scene == Scene::Splash) { splashUpdate(dt); return; }
     s_menuClock = std::fmod(s_menuClock + dt * 10.0f, 24 * 60.0f);
     Audio::setAmbient(Audio::AMB_BIRDS, 0.35f);   // the title screen's quiet morning (0.11v)
@@ -696,16 +707,20 @@ void menu_draw() {
         if (s_langPicker) {
             drawLanguagePanel(W, H, !L::chosen());
         } else if (G.panel == Panel::None) {
+            // Play picks a slot; Load goes straight back into the save you played last.
             if (UI::menuButton(bx, by, cw, bh, "play", T("Play"))) { s_coopPick = false; G.scene = Scene::Slots; }
-            if (UI::button(rx, by, cw, bh, T("How to play"))) { s_introThenPlay = false; G.scene = Scene::Intro; }
+            int last = last_slot();
+            if (UI::menuButton(rx, by, cw, bh, "load", T("Continue"), last >= 0) && last >= 0) s_loadSlot = last;   // next frame
+            if (last >= 0 && UI::hover(rx, by, cw, bh)) UI::tooltip(T("Continue"), T1("Slot {0}", std::to_string(last + 1)));
             if (UI::button(bx, by + 25, cw, bh, T("Local co-op"))) { Local::lobbyOpen(); G.scene = Scene::LocalLobby; }
             if (UI::button(rx, by + 25, cw, bh, T("Online co-op"))) G.scene = Scene::Lobby;
-            if (UI::button(bx, by + 50, cw, bh, T("Controls"))) G.scene = Scene::Controls;
-            if (UI::menuButton(rx, by + 50, cw, bh, "settings", T("Options"))) G.panel = Panel::Options;
-            if (UI::button(bx, by + 75, cw, bh, T("Credits"))) { G.scene = Scene::Credits; s_creditsScroll = 0; }
-            if (UI::menuButton(rx, by + 75, cw, bh, "quit", T("Exit"))) G.quit = true;
+            if (UI::button(bx, by + 50, cw, bh, T("How to play"))) { s_introThenPlay = false; G.scene = Scene::Intro; }
+            if (UI::button(rx, by + 50, cw, bh, T("Controls"))) G.scene = Scene::Controls;
+            if (UI::menuButton(bx, by + 75, cw, bh, "settings", T("Options"))) G.panel = Panel::Options;
+            if (UI::button(rx, by + 75, cw, bh, T("Credits"))) { G.scene = Scene::Credits; s_creditsScroll = 0; }
+            if (UI::menuButton(std::floor(W / 2 - cw / 2), by + 100, cw, bh, "quit", T("Exit"))) G.quit = true;
             bx = std::floor(W / 2 - bw / 2);
-            by -= 30;
+            by -= 2;
             {
                 std::string label = T("Check my other game: IncreMiner");
                 float iw = std::floor(R::textWidth(label)) + 20;
@@ -734,7 +749,6 @@ void menu_draw() {
     } else if (G.scene == Scene::Credits) {
         float w = std::min(W - 40, 420.0f), h = H - 40;
         float x = std::floor(W / 2 - w / 2), y = 20;
-        UI::panel(x, y, w, h, T("CREDITS"));
         // A credit written "Name: https://..." becomes a button that opens the page.
         struct Line { std::string text; int col; std::string url; };
         std::vector<Line> lines;
@@ -772,6 +786,7 @@ void menu_draw() {
         float viewH = h - 50;
         float maxScroll = std::max(0.0f, total - viewH);
         s_creditsScroll = std::min(s_creditsScroll, maxScroll);
+        UI::panelScroll(x, y, w, h, T("CREDITS"), maxScroll > 0 ? s_creditsScroll / maxScroll : 0);
         float ly = y + 22 - s_creditsScroll;
         for (size_t i = 0; i < lines.size(); i++) {
             const Line& l = lines[i];
