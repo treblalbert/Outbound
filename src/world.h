@@ -64,6 +64,7 @@ enum Tone : uint8_t { TONE_AUTO, TONE_GREEN, TONE_DARK, TONE_BLEAK, TONE_ORANGE,
 // Tile::flags
 enum TileFlag : uint8_t {
     TF_KERB = 1,               // a planter (grass or earth) edged with a kerb where it ends
+    TF_IRON = 2,               // 0.12v: an S_FENCE of wrought iron (Tiles/Iron-Fence) rather than wire
 };
 
 // ---- the bigger world (0.11v) ------------------------------------------------------

@@ -43,6 +43,9 @@ Piece wallTile(int solidType, uint8_t variant, int neighbourMask = 0);
 // upper slats, ridge, lower slats, bottom edge.
 Assets::TileRef roofTile(uint8_t style, int col, int row);
 Piece door(uint8_t variant);             // marks a way into a roofed building
+// 0.12v: a door by style (0 brown, 1 dark, 2 white: the furniture pack's; 3 beige,
+// 4 metal: the world pack's) and state (0 shut, 1 open, 2 shot through).
+Piece doorStyle(int style, int state, int pick = 0);
 // 0.12v: a flat concrete roof, drawn from the building's own facade sheet (0..3).
 Assets::TileRef flatRoofTile(uint8_t sheet, int col, int row, uint8_t variant);
 
@@ -79,6 +82,9 @@ Piece streetLight(uint8_t variant);
 enum DecoKind : uint8_t { DK_LEGACY, DK_TUFT, DK_FLOWER, DK_FOREST, DK_JUNK, DK_PEBBLE, DK_MOSS, DK_POSTER };
 inline uint8_t decoCode(int kind, int which) { return (uint8_t)((kind << 5) | (which & 31)); }
 Piece groundDeco(uint8_t code, uint8_t tone = 0);
+// A tuft of grass trodden flat under someone's feet (the pack's stepping-on frames),
+// or nothing when that tuft has none.
+Piece groundDecoTrodden(uint8_t code, uint8_t tone = 0);
 
 // ---- standing objects (0.12v) ----
 // Street furniture, clutter and rooftop gear from the pack, placed by the world's
@@ -92,6 +98,11 @@ enum ObjectKind : uint8_t {
     OB_HVAC, OB_VENT, OB_ANTENNA, OB_ROOF_HOLE, OB_DUCT,
     // on a wall
     OB_WINDOW, OB_WINDOW_BROKEN, OB_WINDOW_BOARDED, OB_POSTER, OB_GRAFFITI, OB_IVY, OB_AWNING, OB_SHOPFRONT,
+    OB_PAINTING,               // 0.12v: on a room's back wall (furniture pack: sunset, hills)
+    OB_DOOR_BOARDED,           // 0.12v: a boarded-up door on a front wall (beige or metal)
+    OB_BALCONY,                // 0.12v: on a flat roof's front edge (pick 0-3: left/right, with a ladder hole)
+    OB_LADDER,                 // 0.12v: from a balcony's hole down to the street (plain, rusty)
+    OB_CELLAR,                 // 0.12v: a storm cellar's doors in the yard (overgrown by the grass round it)
     OB_DOWNSPOUT,              // 0.12v: Tiles/Gutter-And-Downspout, drawn by the scene (pick: grey/rusty, into the ground/out on it)
     OB_COUNT
 };
@@ -104,6 +115,9 @@ inline uint8_t objectFrame(int pick, int overgrown) { return (uint8_t)((pick & 6
 // The art of any prop that stands in the way with its pixels (cars, wrecks, objects).
 Piece propArt(const ::WorldProp& p);
 Piece stump();
+// Tiles/Iron-Fence (0.12v): a wrought-iron railing joined up by `neighbourMask`
+// (1 left, 2 right, 4 up, 8 down).
+Piece ironFence(int neighbourMask);
 // The bunker hatch, lid up; `closed` = slammed shut and sealed (a horde, the night).
 Piece hatch(bool closed = false);
 Piece containerArt(int kind, uint8_t variant);

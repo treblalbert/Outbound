@@ -601,6 +601,10 @@ struct Dresser {
             break;
         default: break;
         }
+        // A storm cellar's doors in the yard of a house out in the country (0.12v), the
+        // grass round them the grass it stands in.
+        if ((b.kind == BK_CABIN || b.kind == BK_FARM || b.kind == BK_TOWN) && rng.chance(0.3f) && near(3, x, y))
+            objectAt(OB_CELLAR, 0, grownFor(x, y), x, y, false, ON_OPEN);
     }
 
     // Windows, posters and graffiti along a building's front wall, an awning over a
@@ -627,6 +631,8 @@ struct Dresser {
                 kind = brick || r < 0.15f ? (rng.chance(0.5f) ? OB_WINDOW_BROKEN : OB_WINDOW_BOARDED) : OB_WINDOW;
                 pick = kind == OB_WINDOW ? windowPick : rng.irange(0, 7);
             } else if (r < 0.2f) { kind = OB_POSTER; pick = rng.irange(0, 1); }
+            // A way in nobody uses any more, boarded up (0.12v).
+            else if (r < 0.26f && !city && !byDoor) { kind = OB_DOOR_BOARDED; pick = b.kind == BK_WAREHOUSE || b.kind == BK_MILITARY ? 1 : 0; }
             else if (r < 0.32f && city) { kind = OB_GRAFFITI; pick = (b.sheet << 3) | rng.irange(0, 5); }
             if (kind != OB_NONE) wallDeco(x, y, kind, pick, rng.chance(0.5f) && kind == OB_POSTER);
             if (rng.chance(city ? 0.12f : 0.2f)) wallDeco(x, y, OB_IVY, rng.irange(0, 12), false);
@@ -703,6 +709,36 @@ struct Dresser {
         if (rng.chance(0.5f)) put(OB_ANTENNA, rng.irange(0, 1), 0);
         if (rng.chance(0.4f)) put(OB_DUCT, rng.irange(0, 2), 0);
         if (rng.chance(0.2f)) put(OB_ROOF_HOLE, rng.irange(0, 1), 0);
+        // A city block's roof may have a balcony over the street, and from the ones
+        // with a hatch a fire ladder down the front (0.12v).
+        if (b.kind == BK_CITY && b.w >= 6 && rng.chance(0.45f)) {
+            int pick = rng.irange(0, 3);
+            bool left = pick == 0 || pick == 2, hole = pick >= 2;
+            int x = left ? b.x0 + 1 + rng.irange(0, 1) : b.x0 + b.w - 4 + rng.irange(0, 1);
+            // Clear of a shop's awning over the door.
+            auto clash = [&](int bx) {
+                for (const WorldProp& q : roofs[bi])
+                    if (q.variant == OB_AWNING && std::fabs(q.pos.x - (bx * (float)TILE + 20)) < 46) return true;
+                return false;
+            };
+            if (clash(x)) { left = !left; pick ^= 1; x = left ? b.x0 + 1 : b.x0 + b.w - 4; }
+            if (clash(x)) return;
+            WorldProp p;
+            p.kind = PROP_OBJECT;
+            p.variant = OB_BALCONY;
+            p.frame = Art::objectFrame(pick, 0);
+            p.pos = Vec2(x * (float)TILE + 20, (b.y0 + b.h - 1) * (float)TILE + 3);
+            addRoofProp(bi, p);
+            if (hole) {
+                WorldProp l;
+                l.kind = PROP_OBJECT;
+                l.variant = OB_LADDER;
+                l.frame = Art::objectFrame(rng.chance(0.5f) ? 1 : 0, 0);
+                l.flipX = !left;
+                l.pos = p.pos + Vec2(left ? -9.0f : 9.0f, 13);
+                addRoofProp(bi, l);
+            }
+        }
     }
 
     void buildings() {
@@ -726,6 +762,28 @@ struct Dresser {
     // ---- 6. grass creeping over the paving -------------------------------------------
     // Grass_On-Top_TileSet: an edge ring (N+W 0, N 1, N+E 2, W 8, E 10, S+W 16, S 17,
     // S+E 18) and inner corners (SE 3, SW 4, NE 11, NW 12), then a few loose tufts.
+    // A lone tile of lawn out on bare ground (or a one-tile finger of it) has no edge
+    // piece in the pack and showed as a flat green square: it goes back to the ground
+    // round it, with a tuft to remember it by (0.12v).
+    void islands() {
+        for (int pass = 0; pass < 2; pass++)
+            for (int y = 2; y < oh - 2; y++)
+                for (int x = 2; x < ow - 2; x++) {
+                    Tile& t = W.at(x, y);
+                    if (t.ground != G_GRASS || compound(x, y) || (t.flags & TF_KERB)) continue;
+                    int grass = 0, other = -1;
+                    const int DX[4] = {1, -1, 0, 0}, DY[4] = {0, 0, 1, -1};
+                    for (int k = 0; k < 4; k++) {
+                        int g = W.at(x + DX[k], y + DY[k]).ground;
+                        if (g == G_GRASS) grass++;
+                        else if (other < 0 && (g == G_DIRT || g == G_SAND || g == G_WASTE)) other = g;
+                    }
+                    if (grass > 1 || other < 0) continue;
+                    t.ground = (uint8_t)other;
+                    if (t.solid == S_NONE && !t.worldDeco) { t.worldDeco = Art::decoCode(Art::DK_TUFT, (x * 7 + y) & 31); t.tone = TONE_GREEN; }
+                }
+    }
+
     void creep() {
         auto wild = [&](int x, int y) {
             if (!W.inBounds(x, y)) return false;
@@ -763,6 +821,17 @@ struct Dresser {
                     }
                 }
                 if (f >= 0) t.overlay = (uint8_t)(Art::OV_GRASSTOP + f);
+                // Moss in the cracks (0.12v), thicker the more the city has run wild;
+                // on dark asphalt the lighter-rimmed kind so it still reads.
+                else if (!t.worldDeco && t.solid == S_NONE) {
+                    int c = W.cityAt(x, y);
+                    float og = c >= 0 ? W.cities[c].overgrowth : 0.3f;
+                    if (chanceAt(x, y, 23) < 0.012f + 0.05f * og) {
+                        bool dark = t.ground == G_ROAD;
+                        t.worldDeco = Art::decoCode(Art::DK_MOSS, (int)(hash2(x, y, salt ^ 0x3055u) % 13) + (dark ? 16 : 0));
+                        if (t.tone == TONE_AUTO) t.tone = og > 0.6f ? TONE_DARK : og < 0.25f ? TONE_BLEAK : TONE_GREEN;
+                    }
+                }
             }
     }
 };
@@ -777,6 +846,7 @@ void dressWorld(World& w, uint64_t seed) {
     d.cities();
     d.buildings();
     d.nature();
+    d.islands();
     d.countryRoads();
     d.creep();
     // OUTBOUND_DRESS_LOG=1: list the city blocks (tile coordinates), for looking at them.

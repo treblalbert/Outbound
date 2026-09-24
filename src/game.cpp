@@ -4,7 +4,9 @@
 #include "sprites.h"
 #include "coop.h"
 #include "atmosphere.h"
+extern std::vector<Vec2> g_steppers;   // setSteppers(): feet treading the grass this frame
 #include <cstdio>
+#include <vector>
 #include <ctime>
 #include <fstream>
 #include <map>
@@ -490,6 +492,16 @@ void drawWorldTiles(World& w, Vec2 cam, float timeSec) {
             }
             if (t.worldDeco) {
                 Art::Piece p = Art::groundDeco(t.worldDeco, t.tone);
+                // Someone standing in it treads it flat (0.12v).
+                if (!g_steppers.empty()) {
+                    Vec2 c(x * TILE + TILE * 0.5f, (y + 1) * (float)TILE - 3);
+                    for (const Vec2& s : g_steppers)
+                        if (std::fabs(s.x - c.x) < 7 && std::fabs(s.y - c.y) < 6) {
+                            Art::Piece flat = Art::groundDecoTrodden(t.worldDeco, t.tone);
+                            if (flat.valid()) p = flat;
+                            break;
+                        }
+                }
                 if (p.valid()) {
                     float px = x * TILE + TILE * 0.5f, py = (y + 1) * (float)TILE;
                     R::spriteAt(*p.sprite, p.frame, {px, py}, R::Pivot::Bottom, 1, Color());
@@ -632,6 +644,9 @@ static void drawDownspout(Vec2 base, int pick) {
     }
 }
 
+std::vector<Vec2> g_steppers;
+void setSteppers(const std::vector<Vec2>& feet) { g_steppers = feet; }
+
 void drawTileSolids(World& w, Vec2 cam, float timeSec) {
     int x0, y0, x1, y1;
     viewRange(w, cam, x0, y0, x1, y1, 5);
@@ -648,6 +663,26 @@ void drawTileSolids(World& w, Vec2 cam, float timeSec) {
                         w.at(tx, ty).solid != S_NONE) standing++;
             if (b.walls > 0 && standing * 5 < b.walls * 2) continue;
             R::shadowBox(b.x0 * (float)TILE, b.y0 * (float)TILE, (b.x0 + b.w) * (float)TILE, (b.y0 + b.h) * (float)TILE, 26);
+        }
+    }
+    // Where a building's wall has been blown out (0.12v): the pack's broken-wall
+    // stumps, round at a corner, straight along a side.
+    {
+        static const Assets::Sprite* broken[2] = {Assets::find("objects/buildings/destroyed-wall_not-corner"),
+                                                  Assets::find("objects/buildings/destroyed-wall_corner")};
+        for (const Building& b : w.buildings) {
+            if (b.x0 > x1 + 1 || b.y0 > y1 + 1 || b.x0 + b.w < x0 - 1 || b.y0 + b.h < y0 - 1) continue;
+            if (b.kind == BK_FLOOR || b.kind == BK_BUNKER) continue;
+            for (int ty = b.y0; ty < b.y0 + b.h; ty++)
+                for (int tx = b.x0; tx < b.x0 + b.w; tx++) {
+                    bool edgeX = tx == b.x0 || tx == b.x0 + b.w - 1, edgeY = ty == b.y0 || ty == b.y0 + b.h - 1;
+                    if ((!edgeX && !edgeY) || !w.inBounds(tx, ty) || w.at(tx, ty).solid != S_NONE || b.isDoor(tx, ty)) continue;
+                    const Assets::Sprite* s = broken[edgeX && edgeY ? 1 : 0];
+                    if (!s) continue;
+                    const Assets::Frame& f = s->frame(0);
+                    bool flip = tx == b.x0 + b.w - 1;
+                    R::frame(f, tx * (float)TILE + (TILE - f.w) * 0.5f, (ty + 1) * (float)TILE - f.h, (float)f.w, (float)f.h, Color(1, 1, 1, 0.9f), flip);
+                }
         }
     }
     for (int y = y0; y <= y1; y++)
@@ -777,8 +812,13 @@ void drawTileSolids(World& w, Vec2 cam, float timeSec) {
                 // A doorway in an inner wall: stacked door tiles mean the wall runs
                 // up and down, so it is seen edge-on.
                 if (!onEdge && (doorAt(x, y - 1) || doorAt(x, y + 1))) face = FACE_SIDE;
-                bool open = t.solid == S_DOOR_OPEN, alt = (t.variant & 1) != 0;
-                Art::Piece p = Art::door((uint8_t)(open ? (alt ? 3 : 1) : (alt ? 2 : 0)));
+                bool open = t.solid == S_DOOR_OPEN;
+                // The building's style of door (world generation sets 0-4), shot
+                // through once it has taken a beating.
+                int style = t.variant < 5 ? t.variant : (t.variant & 1);
+                int state = open ? 1 : (t.hp > 0 && t.hp < solidInfo(S_DOOR).hp / 2 ? 2 : 0);
+                Art::Piece p = Art::doorStyle(style, state, x + y);
+                if (style == 4 && open) tint = Color(0.62f, 0.64f, 0.7f);   // an ajar door, in the metal's grey
                 if (face == FACE_SIDE && p.valid()) {
                     // One edge-on leaf per doorway, standing on its lower tile.
                     if (doorAt(x, y + 1)) break;
@@ -823,7 +863,7 @@ void drawTileSolids(World& w, Vec2 cam, float timeSec) {
                         break;
                     }
                 }
-                Art::Piece p = Art::wallTile(t.solid, t.variant, mask);
+                Art::Piece p = t.solid == S_FENCE && (t.flags & TF_IRON) ? Art::ironFence(mask) : Art::wallTile(t.solid, t.variant, mask);
                 if (p.valid()) R::frame(p.sprite->frame(p.frame), px, py, TILE, TILE, tint);
                 else R::spriteRect(si.sprite, px, py, TILE, TILE, tint);
                 break;

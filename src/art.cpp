@@ -15,7 +15,8 @@ std::vector<const Sprite*> g_trees, g_bushes, g_rocks, g_barrels, g_cars, g_ligh
 // 0.12v: the same trees and bushes grouped by colouring (Tone), overgrown cars by grass,
 // and the flat details by kind (DecoKind).
 std::vector<const Sprite*> g_treeTone[TONE_COUNT], g_bushTone[TONE_COUNT], g_carTone[4];
-std::vector<const Sprite*> g_decoKind[8], g_tuft[4], g_moss[4];
+std::vector<const Sprite*> g_decoKind[8], g_tuft[4], g_moss[4], g_mossLight[4];
+const Sprite* g_tuftStep[4][5] = {};   // 0.12v: grass 3-5 trodden flat (their Sheet2's second frame)
 struct ObjArt { std::vector<Piece> plain, grown[3]; };
 ObjArt g_obj[OB_COUNT];
 std::vector<Assets::TileRef> g_overlay;
@@ -346,9 +347,17 @@ void loadDressing() {
         std::string base = std::string("objects/nature/") + GROWN[g] + "/";
         for (int i = 1; i <= 5; i++) add(g_tuft[g + 1], base + "grass_" + std::to_string(i) + "_" + GROWN[g]);
         for (int i = 1; i <= 13; i++) add(g_moss[g + 1], base + "grass-on-top-of-things/moss-on-top_" + GROWN[g] + "_" + std::to_string(i));
+        // The same with a lighter rim, which reads on dark asphalt (0.12v).
+        for (int i = 1; i <= 13; i++)
+            add(g_mossLight[g + 1], base + "grass-on-top-of-things/lighter-outline/moss-on-top_" + GROWN[g] + "_" + std::to_string(i) + "_lighter");
     }
     g_tuft[0] = g_tuft[1];
     g_moss[0] = g_moss[1];
+    g_mossLight[0] = g_mossLight[1];
+    for (int g = 0; g < 3; g++)
+        for (int i = 3; i <= 5; i++)
+            g_tuftStep[g + 1][i - 1] = Assets::find(std::string("objects/nature/") + GROWN[g] + "/grass_" + std::to_string(i) + "_stepping-on-animation_" + GROWN[g]);
+    for (int i = 0; i < 5; i++) g_tuftStep[0][i] = g_tuftStep[1][i];
     for (const char* f : {"flowers_1", "flowers_2", "flowers_3", "flower_1", "flower_2"})
         for (const char* c : {"blue", "purple", "red", "yellow"}) add(g_decoKind[DK_FLOWER], nat + f + "_" + c);
     for (const char* f : {"mushroom", "mushrooms_1_yellow", "mushrooms_2_red", "stick", "stick_leaves", "stump_2_mushrooms"})
@@ -415,6 +424,12 @@ void loadDressing() {
     }
     plain(OB_JUNK, "objects/metal-plates"); plain(OB_JUNK, "objects/gray-brick_debris");
     plain(OB_HVAC, "objects/buildings/hvac"); grown(OB_HVAC, "objects/buildings/hvac_overgrown_%s");
+    plain(OB_PAINTING, "furniture/painting_sunset"); plain(OB_PAINTING, "furniture/painting_hills");
+    plain(OB_DOOR_BOARDED, "objects/buildings/door_3_boarded-up_beige"); plain(OB_DOOR_BOARDED, "objects/buildings/door_6_boarded-up_metal");
+    for (const char* b : {"balcony_1_left", "balcony_2_right", "balcony_3_left_ladder-hole", "balcony_4_right_ladder-hole"})
+        plain(OB_BALCONY, std::string("objects/buildings/") + b);
+    plain(OB_LADDER, "objects/buildings/ladder_balcony_metal_1"); plain(OB_LADDER, "objects/buildings/ladder_balcony_metal_1_rusty");
+    plain(OB_CELLAR, "objects/buildings/enterance_green"); grown(OB_CELLAR, "objects/buildings/enterance_%s");
     for (const char* v : {"air-vent_1", "air-vent_2_rusty", "air-vent_3", "air-vent_4_rusty"}) plain(OB_VENT, std::string("objects/buildings/") + v);
     plain(OB_ANTENNA, "objects/buildings/antenna_1"); plain(OB_ANTENNA, "objects/buildings/antenna_2");
     plain(OB_ROOF_HOLE, "objects/buildings/roof-hole_1_gray"); plain(OB_ROOF_HOLE, "objects/buildings/roof-hole_2_red");
@@ -938,6 +953,22 @@ Assets::TileRef roofTile(uint8_t style, int col, int row) {
 }
 
 Piece door(uint8_t v) { return piece(pick(g_doors, v)); }
+
+Piece doorStyle(int style, int state, int pickN) {
+    static const char* KEYS[5][3] = {
+        {"furniture/door_brown", "furniture/door_brown_open", "furniture/door_brown_hole"},
+        {"furniture/door_dark", "furniture/door_dark_open", "furniture/door_dark_hole"},
+        {"furniture/door_white", "furniture/door_white_open", "furniture/door_white"},
+        {"objects/buildings/door_1_beige", "objects/buildings/door_2_ajar_beige", "objects/buildings/door_1_beige"},
+        {"objects/buildings/door_4_metal", "objects/buildings/door_2_ajar_beige", "objects/buildings/door_5_rusty_metal"},
+    };
+    int s = std::clamp(style, 0, 4), st = std::clamp(state, 0, 2);
+    const char* key = KEYS[s][st];
+    if (s == 4 && st == 0 && (pickN & 1)) key = "objects/buildings/door_5_rusty_metal";
+    const Sprite* sp = Assets::find(key);
+    if (!sp) return door((uint8_t)(st == 1 ? 1 : 0));
+    return piece(sp);
+}
 // A slow wind wave rolls across the map, so neighbouring trees lean together but
 // not in lockstep; a quicker flutter on top keeps the leaves alive between gusts.
 static float windAt(uint8_t v, float time, float speed) {
@@ -1062,11 +1093,43 @@ Piece groundDeco(uint8_t code, uint8_t tone) {
     switch (kind) {
     case DK_LEGACY: return piece(pick(g_deco, (uint8_t)which));
     case DK_TUFT: return piece(pick(g_tuft[g], (uint8_t)which));
-    case DK_MOSS: return piece(pick(g_moss[g], (uint8_t)which));
+    case DK_MOSS:
+        // `which` 16 and up: the lighter-rimmed ones.
+        if (which >= 16 && !g_mossLight[g].empty()) return piece(pick(g_mossLight[g], (uint8_t)(which - 16)));
+        return piece(pick(g_moss[g], (uint8_t)which));
     default: return kind < 8 ? piece(pick(g_decoKind[kind], (uint8_t)which)) : Piece();
     }
 }
 Piece stump() { return piece(g_stump); }
+
+Piece groundDecoTrodden(uint8_t code, uint8_t tone) {
+    if ((code >> 5) != DK_TUFT) return Piece();
+    int g = tone == TONE_DARK ? 2 : tone == TONE_BLEAK ? 3 : 1;
+    const auto& v = g_tuft[g];
+    if (v.size() != 5) return Piece();
+    const Sprite* s = g_tuftStep[g][(code & 31) % 5];
+    if (!s || s->frameCount() < 2) return Piece();
+    return piece(s, 1);
+}
+
+Piece ironFence(int mask) {
+    static const Sprite* s = Assets::find("tiles/iron-fence_tileset");
+    if (!s || !s->valid()) return Piece();
+    // The sheet is one railed-in plot, 3 x 4: corners, top and bottom runs, the sides,
+    // and in the middle a lone link.
+    int f = 4;
+    switch (mask & 15) {
+    case 2 | 8: f = 0; break;
+    case 1 | 8: f = 2; break;
+    case 2 | 4: f = 9; break;
+    case 1 | 4: f = 11; break;
+    case 1: case 2: case 1 | 2: case 1 | 2 | 4: case 1 | 2 | 8: f = 1; break;
+    case 4: case 8: case 4 | 8: case 4 | 8 | 1: f = 5; break;
+    case 4 | 8 | 2: f = 3; break;
+    default: f = 4; break;
+    }
+    return piece(s, std::min(f, s->frameCount() - 1));
+}
 Piece hatch(bool closed) { return piece(closed && g_hatchClosed ? g_hatchClosed : g_hatch); }
 
 Piece containerArt(int kind, uint8_t variant) {

@@ -54,6 +54,8 @@ const FurnPiece FURN_PIECES[] = {
     {"plant_basket", 1, FP_WALL}, {"plant_grey", 1, FP_WALL}, {"floorlamp_a", 1, FP_WALL}, {"floorlamp_c", 1, FP_WALL},
     {"sofa_grey", 2, FP_FREE}, {"sofa_beige", 2, FP_FREE}, {"armchair_grey", 1, FP_FREE}, {"table_round", 1, FP_FREE},
     {"table_long", 2, FP_FREE}, {"rug_red", 2, FP_RUG}, {"rug_red_b", 2, FP_RUG}, {"rug_round", 2, FP_RUG},
+    // 0.12v
+    {"tv", 2, FP_WALL}, {"tablelamp", 1, FP_WALL}, {"mirror", 1, FP_WALL},
 };
 const int FURN_PIECE_COUNT = sizeof(FURN_PIECES) / sizeof(FURN_PIECES[0]);
 
@@ -379,6 +381,18 @@ void World::furnishBuildings(size_t from) {
             if (!ok) continue;
             place(piece, x, y, false);
             wantRug--;
+        }
+        // A painting on the back wall now and then (0.12v), over the furniture.
+        if (b.w >= 5 && r.chance(0.45f)) {
+            int x = r.irange(b.x0 + 1, b.x0 + b.w - 3);
+            if (at(x, b.y0).solid != S_NONE && at(x + 1, b.y0).solid != S_NONE && at(x, b.y0).solid != S_DOOR && at(x + 1, b.y0).solid != S_DOOR) {
+                WorldProp p;
+                p.kind = PROP_WALLDECO;
+                p.variant = Art::OB_PAINTING;
+                p.frame = Art::objectFrame(r.irange(0, 1), 0);
+                p.pos = Vec2((x + 1) * (float)TILE, (b.y0 + 1) * (float)TILE - 1);
+                props.push_back(p);
+            }
         }
     }
 }
@@ -776,8 +790,13 @@ struct Gen {
             int dx, dy, ox = 0, oy = 0;
             if (side < 2) { dx = rng.irange(x0 + 1, x0 + bw - 3); dy = side == 0 ? y0 : y0 + bh - 1; ox = 1; }
             else { dy = rng.irange(y0 + 1, y0 + bh - 3); dx = side == 2 ? x0 : x0 + bw - 1; oy = 1; }
+            // Its style (0.12v, see Art::doorStyle): metal on sheds and army huts, the
+            // plain beige ones on some town and city fronts, wood elsewhere.
+            int style = bkind == BK_WAREHOUSE || bkind == BK_MILITARY ? 4
+                      : (bkind == BK_CITY || bkind == BK_TOWN) && rng.chance(0.4f) ? 3 : rng.irange(0, 1);
             for (int k = 0; k < 2; k++) {
                 setSolid(dx + ox * k, dy + oy * k, S_DOOR);
+                W.at(dx + ox * k, dy + oy * k).variant = (uint8_t)style;
                 doors.push_back({dx + ox * k, dy + oy * k});
                 outerDoors.push_back({dx + ox * k, dy + oy * k});
             }
@@ -789,6 +808,7 @@ struct Gen {
             for (int y = y0 + 1; y < y0 + bh - 1; y++)
                 if (y != gap && y != gap + 1) setSolid(px, y, wall);
             setSolid(px, gap, S_DOOR); setSolid(px, gap + 1, S_DOOR);
+            W.at(px, gap).variant = W.at(px, gap + 1).variant = 2;   // indoors: the white ones
             doors.push_back({px, gap}); doors.push_back({px, gap + 1});
         } else if (bh >= 11 && rng.chance(0.7f)) {
             int py = y0 + bh / 2 + rng.irange(-1, 1);
@@ -796,6 +816,7 @@ struct Gen {
             for (int x = x0 + 1; x < x0 + bw - 1; x++)
                 if (x != gap && x != gap + 1) setSolid(x, py, wall);
             setSolid(gap, py, S_DOOR); setSolid(gap + 1, py, S_DOOR);
+            W.at(gap, py).variant = W.at(gap + 1, py).variant = 2;
             doors.push_back({gap, py}); doors.push_back({gap + 1, py});
         }
         // A city building with floors above (0.11v): a flight of stairs against the
@@ -1184,6 +1205,16 @@ struct Gen {
                     bool path = (x >= px && x <= px + 1) || (y >= py && y <= py + 1);
                     if (!path) green(x, y, kept);
                 }
+            // A kept park is often railed in wrought iron (0.12v), open where the paths run out.
+            if (kept && rng.chance(0.7f))
+                for (int y = iy; y < iy + ih; y++)
+                    for (int x = ix; x < ix + iw; x++) {
+                        bool edge = x == ix || y == iy || x == ix + iw - 1 || y == iy + ih - 1;
+                        bool path = (x >= px && x <= px + 1) || (y >= py && y <= py + 1);
+                        if (!edge || path || W.at(x, y).solid != S_NONE) continue;
+                        setSolid(x, y, S_FENCE);
+                        W.at(x, y).flags |= TF_IRON;
+                    }
             int want = iw * ih / (kept ? 16 : 9);
             for (int i = 0; i < want; i++) {
                 int x = rng.irange(ix, ix + iw - 1), y = rng.irange(iy, iy + ih - 1);
@@ -1234,7 +1265,11 @@ struct Gen {
                     int side = y == iy ? 0 : y == iy + ih - 1 ? 1 : x == ix ? 2 : x == ix + iw - 1 ? 3 : -1;
                     if (side < 0) continue;
                     int along = side < 2 ? x : y;
-                    if (side == gateSide && along >= gate && along <= gate + 2) continue;
+                    // The way in (0.12v): wire gates when it is in a side that runs across.
+                    if (side == gateSide && along >= gate && along <= gate + 2) {
+                        if (side < 2) { setSolid(x, y, S_FENCE_GATE); W.at(x, y).variant = along == gate + 1 ? 1 : 0; }
+                        continue;
+                    }
                     setSolid(x, y, S_FENCE);
                 }
             for (int i = 0; i < 3; i++) {

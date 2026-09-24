@@ -699,6 +699,7 @@ void defense_draw() {
     sceneSetWorld(&w);
     setSunForTime(p.timeMin);
     R::begin(R::WORLD, cam);
+    setSteppers({});
     drawWorldTiles(w, cam, G.realTime);
     Atmo::drawGround(w, cam);
     Art::Piece hatchArt = Art::hatch();

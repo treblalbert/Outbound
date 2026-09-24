@@ -559,6 +559,8 @@ void placeTurretsInWorld(World& w);
 std::string raid_missedHorde();
 // Primitive-drawn turret art, shared by the raid and the defense editor.
 void drawTurret(const Turret& t, Vec2 tileCenter, float alpha);
+// Where people's feet are this frame (0.12v): the grass under them is drawn trodden.
+void setSteppers(const std::vector<Vec2>& feet);
 // How far open a gate tile is, 0..1 (raid.cpp keeps it moving).
 float gateOpenness(int tx, int ty);
 

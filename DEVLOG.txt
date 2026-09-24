@@ -192,6 +192,20 @@ OUTBOUND - DEVLOG (0.11v)
 
 
 
+·MORE OF THE PACK IN THE WORLD
+
+- Kept city parks are often railed in wrought iron (the pack's iron fence), open where the paths run out.
+- Container depots have wire gates in the side you drive in by. Gates now work anywhere on the map, not just at the bunker.
+- Doors have styles: metal on warehouses and army huts, the plain beige ones on some town and city fronts, wood on houses, and white doors inside. A door that has taken a beating shows shot through, and open doors show their open leaf.
+- Rooms get a TV, a table lamp or a standing mirror against the back wall now and then, and a painting (a sunset, or hills) hung on it.
+- City roofs can have a balcony over the street, some with a fire ladder down the front. Country houses may have a storm cellar in the yard, its grass the grass it stands in. Some front walls have a boarded-up door.
+- Where a building's wall has been blown out you see the broken stump of the wall.
+- Moss grows in the cracks of city paving and roads, more the wilder the city; on dark asphalt it is the lighter-rimmed kind so it still shows.
+- Grass tufts are trodden flat under whoever stands in them.
+- Fixed: a lone tile of lawn on bare ground showed as a flat green square.
+
+
+
 ·HANDS, BATS AND AXES
 
 - Melee: F (tap R3 on a controller) punches whatever is right in front of you, with the pack's punch animation. Carry a Baseball Bat anywhere in your pockets and you swing that instead: more damage, more reach, a harder knock-back. The trader sells bats for $90, and they turn up in the world. Holding R3 still toggles the laser.

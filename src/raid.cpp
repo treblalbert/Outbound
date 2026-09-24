@@ -2048,31 +2048,42 @@ void updateGates(float dt) {
     for (const Target& t : s_targets) friends.push_back(t.pos);
     friends.push_back(G.player.pos);
     for (const Hireling* h : s_mercs) if (!h->dead) friends.push_back(h->pos);
-    const int R = BUILD_RADIUS + 2;
-    for (int y = w.homeTy - R; y <= w.homeTy + R; y++)
-        for (int x = w.homeTx - R; x <= w.homeTx + R; x++) {
-            if (!w.inBounds(x, y)) continue;
-            Tile& t = w.at(x, y);
-            bool fence = t.solid == S_FENCE_GATE || t.solid == S_FENCE_GATE_OPEN;
-            if (!fence && t.solid != S_GATE && t.solid != S_GATE_OPEN) continue;
-            Vec2 c = World::tileCenter(x, y);
-            bool want = false, inWay = false;
-            for (const Vec2& f : friends) {
-                float d = dist(f, c);
-                if (d < 26) want = true;
-                if (d < 11) inWay = true;
-            }
-            for (const Enemy& e : G.enemies)
-                if (!e.dead && dist(e.pos, c) < 11) { inWay = true; break; }
-            float& o = s_gateT.try_emplace(y * w.w + x, gateOpenAt(x, y)).first->second;
-            bool wasOpen = o >= 0.5f;
-            o = clampf(o + (want ? 3.0f : -3.0f) * dt, inWay && o >= 0.5f ? 0.5f : 0.0f, 1.0f);
-            bool open = o >= 0.5f;
-            if (open != wasOpen) {
-                t.solid = fence ? (open ? S_FENCE_GATE_OPEN : S_FENCE_GATE) : (open ? S_GATE_OPEN : S_GATE);
-                sfxAt(Snd::door, c, G.player.pos, 0.45f, fence ? 1.25f : 0.8f);
-            }
+    // The gates that matter this frame: any a friend is near, and any still swinging.
+    std::vector<int> gates;
+    auto isGate = [&](int s) { return s == S_GATE || s == S_GATE_OPEN || s == S_FENCE_GATE || s == S_FENCE_GATE_OPEN; };
+    for (const Vec2& f : friends) {
+        int fx = World::toTile(f.x), fy = World::toTile(f.y);
+        for (int y = fy - 2; y <= fy + 2; y++)
+            for (int x = fx - 2; x <= fx + 2; x++)
+                if (w.inBounds(x, y) && isGate(w.at(x, y).solid)) gates.push_back(y * w.w + x);
+    }
+    for (const auto& kv : s_gateT) gates.push_back(kv.first);
+    std::sort(gates.begin(), gates.end());
+    gates.erase(std::unique(gates.begin(), gates.end()), gates.end());
+    for (int idx : gates) {
+        int x = idx % w.w, y = idx / w.w;
+        Tile& t = w.at(x, y);
+        if (!isGate(t.solid)) { s_gateT.erase(idx); continue; }   // broken down meanwhile
+        bool fence = t.solid == S_FENCE_GATE || t.solid == S_FENCE_GATE_OPEN;
+        Vec2 c = World::tileCenter(x, y);
+        bool want = false, inWay = false;
+        for (const Vec2& f : friends) {
+            float d = dist(f, c);
+            if (d < 26) want = true;
+            if (d < 11) inWay = true;
         }
+        for (const Enemy& e : G.enemies)
+            if (!e.dead && dist(e.pos, c) < 11) { inWay = true; break; }
+        float& o = s_gateT.try_emplace(idx, gateOpenAt(x, y)).first->second;
+        bool wasOpen = o >= 0.5f;
+        o = clampf(o + (want ? 3.0f : -3.0f) * dt, inWay && o >= 0.5f ? 0.5f : 0.0f, 1.0f);
+        bool open = o >= 0.5f;
+        if (open != wasOpen) {
+            t.solid = fence ? (open ? S_FENCE_GATE_OPEN : S_FENCE_GATE) : (open ? S_GATE_OPEN : S_GATE);
+            sfxAt(Snd::door, c, G.player.pos, 0.45f, fence ? 1.25f : 0.8f);
+        }
+        if (o <= 0 && !want) s_gateT.erase(idx);   // shut and nobody about: forget it
+    }
 }
 
 void damageTurret(int index, float dmg) {
@@ -6621,6 +6632,20 @@ void raid_draw() {
     if (localCrypt() >= 0) R::setSun(Vec2(), 0);   // no sun below
     else setSunForTime(G.prof.timeMin);
     R::begin(R::WORLD, cam);
+    {
+        // Feet in the grass (0.12v): everyone standing about on screen.
+        std::vector<Vec2> feet;
+        Vec2 c0(std::floor(cam.x) - 16, std::floor(cam.y) - 16);
+        auto add = [&](Vec2 p) {
+            if (p.x > c0.x && p.y > c0.y && p.x < c0.x + R::viewW() + 32 && p.y < c0.y + R::viewH() + 32) feet.push_back(p);
+        };
+        if (s_ride < 0 && s_deathT < 0) add(G.player.pos + Vec2(0, 6));
+        for (const Enemy& e : G.enemies) if (!e.dead) add(e.pos + Vec2(0, 6));
+        for (const Hireling* h : s_mercs) if (!h->dead && h->rideCar < 0) add(h->pos + Vec2(0, 6));
+        for (const MercView& m : s_mercViews) if (!m.ride) add(m.pos + Vec2(0, 6));
+        for (const Target& tg : s_targets) add(tg.pos + Vec2(0, 6));
+        setSteppers(feet);
+    }
     drawWorldTiles(G.world, cam, t);
     for (const BloodSpeck& s : s_specks) {
         if (!onScreen(s.pos)) continue;
