@@ -10,6 +10,7 @@ enum Ground : uint8_t {
     G_RUBBLE, G_BASE_FLOOR, G_CRYPT,
     G_PAVEMENT,                // 0.11v: city paving (sidewalks, plazas, the mechanic's yard)
     G_VOID,                    // 0.11v: nothing at all round an upper floor
+    G_WASTE,                   // 0.12v: dead grey-brown scrub (the Bleak-Yellow sheet)
     G_COUNT
 };
 
@@ -36,13 +37,29 @@ enum PropKind : uint8_t {
     // it faces), stairs between the floors of a city building (variant = stairway), and
     // the mechanic's workshop sign.
     PROP_WRECK, PROP_STAIRS, PROP_GARAGE,
+    // 0.12v dressing: a standing object from the pack (variant = Art::ObjectKind, frame =
+    // which one of its kind, plus its overgrowth in the top bits; see Art::object). Its
+    // tiles are reserved like a car's and it blocks with its pixels.
+    PROP_OBJECT,
+    // Flat on a building's front wall (windows, posters, graffiti, ivy, shop glass); gone
+    // with the wall tile it hangs on. Same variant / frame as PROP_OBJECT.
+    PROP_WALLDECO,
 };
 struct WorldProp {
     Vec2 pos;                  // baseline (bottom centre)
     uint8_t kind = PROP_CAR;
     uint8_t variant = 0;
     bool flipX = false;        // mirrored art (a street light on the far side of the road)
-    uint8_t frame = 0;         // a wreck's facing (0..7)
+    uint8_t frame = 0;         // a wreck's facing (0..7); an object's pick and overgrowth
+};
+
+// A vegetation / overgrowth palette (Tile::tone): which of the pack's colourings the
+// trees, bushes, tufts and overgrown props on a tile use. TONE_AUTO follows the ground.
+enum Tone : uint8_t { TONE_AUTO, TONE_GREEN, TONE_DARK, TONE_BLEAK, TONE_ORANGE, TONE_YELLOW, TONE_RED, TONE_COUNT };
+
+// Tile::flags
+enum TileFlag : uint8_t {
+    TF_KERB = 1,               // a planter (grass or earth) edged with a kerb where it ends
 };
 
 // ---- the bigger world (0.11v) ------------------------------------------------------
@@ -55,7 +72,20 @@ constexpr int CRYPT_DAY = 3;
 inline int outsideSize(int day) { return day >= CITY_DAY ? 536 : 240; }
 
 // A city: its streets and blocks, in tiles.
-struct CityZone { int x0 = 0, y0 = 0, w = 0, h = 0; bool contains(int tx, int ty) const { return tx >= x0 && ty >= y0 && tx < x0 + w && ty < y0 + h; } };
+struct CityZone {
+    int x0 = 0, y0 = 0, w = 0, h = 0;
+    // 0.12v: where its streets run (the left / top tile of each, `street` tiles wide) and
+    // how overgrown it is, 0 (kept) .. 1 (the grass has most of it back).
+    std::vector<int> streetX, streetY;
+    int street = 4;
+    float overgrowth = 0;
+    bool contains(int tx, int ty) const { return tx >= x0 && ty >= y0 && tx < x0 + w && ty < y0 + h; }
+};
+// One block between a city's streets and what was made of it (0.12v), for the dressing.
+enum BlockKind : uint8_t { BLK_BUILDINGS, BLK_PARKING, BLK_PARK, BLK_RUIN, BLK_DEPOT };
+struct CityBlock { int x0 = 0, y0 = 0, w = 0, h = 0; uint8_t kind = BLK_BUILDINGS; uint8_t yard = 0; int city = 0; };
+// What a building is (0.12v), so the dressing can furnish its surroundings to suit.
+enum BuildingKind : uint8_t { BK_CABIN, BK_TOWN, BK_WAREHOUSE, BK_MILITARY, BK_FARM, BK_CITY, BK_GARAGE, BK_BUNKER, BK_FLOOR };
 
 // An upper floor of a city building. Floors are laid out off the map (like the
 // catacombs), each the same size as the building below it; stairs join them.
@@ -104,6 +134,11 @@ struct Tile {
     // Furniture in a building (FURN_PIECES index + 1, 0 = none, FURN_REST = the other
     // tiles of a wide piece, drawn by the tile at its left).
     uint8_t furn = 0;
+    // 0.12v dressing: flat art laid over the ground (Art::overlayTile: road paint, garbage,
+    // grass creeping over paving), the vegetation palette, and TileFlag bits.
+    uint8_t overlay = 0;
+    uint8_t tone = TONE_AUTO;
+    uint8_t flags = 0;
 };
 
 // Furniture pieces that dress building interiors (the "furniture/..." sprites).
@@ -141,6 +176,12 @@ struct Building {
     int16_t doorX[MAX_DOORS] = {};
     int16_t doorY[MAX_DOORS] = {};
     uint8_t doorCount = 0;
+    // 0.12v: which facade sheet its walls use, and a flat concrete roof (the city's)
+    // instead of the pitched one, with its rooftop clutter (World::roofProps).
+    uint8_t sheet = 0;
+    uint8_t kind = BK_CABIN;
+    bool flatRoof = false;
+    int roofProp0 = 0, roofPropN = 0;
 
     bool isDoor(int tx, int ty) const {
         for (int i = 0; i < doorCount; i++)
@@ -186,9 +227,13 @@ struct World {
     std::vector<EnemySpawn> spawns;
     std::vector<WorldProp> props;
     std::vector<Building> buildings;
+    // 0.12v: what stands on the flat roofs (HVAC units, vents, antennas), drawn with the
+    // roof and faded with it; each building owns a run of it (Building::roofProp0/N).
+    std::vector<WorldProp> roofProps;
     // 0.11v: the cities, the upper floors of their buildings and the stairs between,
     // and the gangs' patrol routes (EnemySpawn::patrol indexes them).
     std::vector<CityZone> cities;
+    std::vector<CityBlock> blocks;      // 0.12v: every city block, for the dressing
     std::vector<Floor> floors;
     std::vector<Stairway> stairs;
     std::vector<PatrolRoute> patrols;
@@ -278,4 +323,13 @@ struct World {
     void rebuildMap();
 
     int addContainer(Vec2 pos, int kind, int tx, int ty, uint8_t variant = 0);
+    // A street light standing on (x, y) with its foot on the pole, arm variant 0 side,
+    // 1 up, 2 down; false when the tile is taken.
+    bool placeStreetLight(int x, int y, int variant, bool flip);
 };
+
+// The dressing pass (dress.cpp, 0.12v): run last by World::generate on its own dice, so
+// nothing it adds moves the day's buildings, loot or raiders. Colours the vegetation in
+// stands, strews the ground with detail, paints the roads, furnishes the streets, yards
+// and roofs, and lets the grass creep back over the paving.
+void dressWorld(World& w, uint64_t seed);

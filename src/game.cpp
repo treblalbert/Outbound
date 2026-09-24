@@ -468,6 +468,11 @@ void drawWorldTiles(World& w, Vec2 cam, float timeSec) {
                     else if (along % 2 == 1 && lf == along / 2) R::rect(px + 7, py + 3, 2, 10, paint);
                 }
             }
+            // Road paint, garbage, grass creeping over the paving (0.12v).
+            if (t.overlay) {
+                Assets::TileRef ov = Art::overlayTile(t.overlay);
+                if (ov.valid()) R::tileAt(ov, px, py, TILE);
+            }
         }
     // Flat scenery details (grass tufts, litter, flowers) sit on top of the ground,
     // and rugs on the floors of buildings.
@@ -482,7 +487,7 @@ void drawWorldTiles(World& w, Vec2 cam, float timeSec) {
                 continue;
             }
             if (t.worldDeco) {
-                Art::Piece p = Art::groundDeco(t.worldDeco - 1);
+                Art::Piece p = Art::groundDeco(t.worldDeco, t.tone);
                 if (p.valid()) {
                     float px = x * TILE + TILE * 0.5f, py = (y + 1) * (float)TILE;
                     R::spriteAt(*p.sprite, p.frame, {px, py}, R::Pivot::Bottom, 1, Color());
@@ -583,13 +588,13 @@ void drawTileSolids(World& w, Vec2 cam, float timeSec) {
                 break;
             }
             case S_TREE: {
-                Art::Piece p = Art::tree(t.variant, timeSec);
+                Art::Piece p = Art::tree(t.variant, timeSec, t.tone);
                 if (p.valid()) sceneAdd(p, base + Vec2(0, 3), tint);
                 else sceneAddSprite(TREE, {base.x, base.y - TILE * 0.5f}, tint);
                 break;
             }
             case S_BUSH: {
-                Art::Piece p = Art::bush(t.variant, timeSec);
+                Art::Piece p = Art::bush(t.variant, timeSec, t.tone);
                 if (p.valid()) sceneAdd(p, base + Vec2(0, 2), tint);
                 else sceneAddSprite(BUSH, {base.x, base.y - TILE * 0.5f}, tint);
                 break;
@@ -608,7 +613,7 @@ void drawTileSolids(World& w, Vec2 cam, float timeSec) {
                 break;
             }
             case S_BOUNDARY: {
-                Art::Piece p = Art::tree((uint8_t)(t.variant + x + y), timeSec);
+                Art::Piece p = Art::tree((uint8_t)(t.variant + x + y), timeSec, t.tone);
                 Color dark(0.45f, 0.45f, 0.55f);
                 if (p.valid()) sceneAdd(p, base + Vec2(0, 3), dark);
                 else R::spriteRect(BOUNDARY, px, py, TILE, TILE);
@@ -692,6 +697,20 @@ void drawTileSolids(World& w, Vec2 cam, float timeSec) {
             Art::Piece wp = Art::wreck(p.variant, p.frame);
             sceneAdd(wp, p.pos);
             if (wp.valid()) sceneLift(spriteEmptyRowsBelow(wp.sprite, wp.frame));
+            continue;
+        }
+        if (p.kind == PROP_OBJECT) {
+            Art::Piece op = Art::propArt(p);
+            sceneAdd(op, p.pos);
+            if (op.valid()) sceneLift(spriteEmptyRowsBelow(op.sprite, op.frame));
+            continue;
+        }
+        if (p.kind == PROP_WALLDECO) {
+            // Hangs on a front wall tile; shot away with it.
+            int tx = World::toTile(p.pos.x), ty = World::toTile(p.pos.y - 1);
+            if (!w.inBounds(tx, ty) || w.at(tx, ty).solid == S_NONE) continue;
+            Art::Piece dp = Art::object(p.variant, p.frame & 63, p.frame >> 6);
+            if (dp.valid()) R::spriteAt(*dp.sprite, dp.frame, p.pos, R::Pivot::Bottom, 1, Color(), dp.flipX != p.flipX);
             continue;
         }
         if (p.kind == PROP_STAIRS) {
@@ -787,7 +806,7 @@ void drawTileSolids(World& w, Vec2 cam, float timeSec) {
             }
             continue;
         }
-        Art::Piece art = p.kind == PROP_CAR ? Art::car(p.variant) : Art::streetLight(p.variant);
+        Art::Piece art = p.kind == PROP_CAR ? Art::car(p.variant, p.frame) : Art::streetLight(p.variant);
         art.flipX = art.flipX != p.flipX;   // which way round the art pack drew it
         sceneAdd(art, p.pos);
     }
@@ -865,6 +884,26 @@ void drawRoofs(World& w, Vec2 cam, Vec2 viewer, float dt) {
         if (rh < 1) continue;
         roofDrawn[bi] = 1;
         Color tint(1, 1, 1, 1.0f - b.reveal);
+        if (b.flatRoof) {
+            // A city block's flat concrete roof (0.12v), parapet round the edge, with
+            // whatever stands up there.
+            for (int ry = 0; ry < rh; ry++)
+                for (int rx = 0; rx < b.w; rx++) {
+                    int col = rx == 0 ? 0 : rx == b.w - 1 ? 2 : 1, row = ry == 0 ? 0 : ry == rh - 1 ? 2 : 1;
+                    Assets::TileRef ref = Art::flatRoofTile(b.sheet, col, row, (uint8_t)hash2(b.x0 + rx, b.y0 + ry, 0x0F1A7u));
+                    Color tc = tint;
+                    if (g_roofPeek) tc.a *= 1.0f - g_roofPeek(b.x0 + rx, b.y0 + ry);
+                    if (ref.valid() && tc.a > 0.01f) R::tileAt(ref, px0 + rx * TILE, py0 + ry * TILE, TILE, tc);
+                }
+            for (int i = b.roofProp0; i < b.roofProp0 + b.roofPropN && i < (int)w.roofProps.size(); i++) {
+                const WorldProp& rp = w.roofProps[i];
+                Art::Piece op = Art::object(rp.variant, rp.frame & 63, rp.frame >> 6);
+                Color tc = tint;
+                if (g_roofPeek) tc.a *= 1.0f - g_roofPeek(World::toTile(rp.pos.x), World::toTile(rp.pos.y - 1));
+                if (op.valid() && tc.a > 0.01f) R::spriteAt(*op.sprite, op.frame, rp.pos, R::Pivot::Bottom, 1, tc, op.flipX != rp.flipX);
+            }
+            continue;
+        }
         for (int ry = 0; ry < rh; ry++) {
             int row = rh == 1 ? 2
                     : ry == 0 ? 0

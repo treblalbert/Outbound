@@ -69,7 +69,8 @@ bool puddleAt(const World& w, int tx, int ty, float& threshold, int& variant) {
     if (!w.inBounds(tx, ty)) return false;
     const Tile& t = w.at(tx, ty);
     if (t.solid != S_NONE) return false;
-    if (t.ground != G_GRASS && t.ground != G_DIRT && t.ground != G_SAND && t.ground != G_ROAD) return false;
+    if (t.ground != G_GRASS && t.ground != G_DIRT && t.ground != G_SAND && t.ground != G_WASTE && t.ground != G_ROAD &&
+        t.ground != G_PAVEMENT) return false;
     uint32_t h = hash2(tx, ty, (uint32_t)w.seed ^ 0x9D11u);
     if ((h & 0xFFFF) > 0xFFFF * 0.05f) return false;
     if (underRoof(w, tx, ty)) return false;

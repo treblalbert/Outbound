@@ -207,6 +207,26 @@ a one tile dirt shoulder at generation time so asphalt never meets grass directl
 * Everything else is a single sprite, looked up by its lowercased path, e.g.
   `objects/nature/green/tree_5_big_green`.
 
+The same sheets also draw kerbs, and the game uses them (0.12v): each Background sheet
+has a kerbstone edge for its paving (frames 6-10, 30-34, 56-58), its grass (11-13,
+35-37, 59-61, 120-121, 144-145) and its earth (19-21, 41-45, 65-69). Paving next to a
+road gets the kerb on its road side, and a planter (a tile with `TF_KERB`) gets one
+wherever it ends, so the asphalt stays plain right up to the kerb. The Bleak-Yellow
+sheet is the dead grey scrub (`G_WASTE`); it draws its own edges against green grass
+(its earth ring's frames -3, inner corners -2), dry grass (+3 / +2) and earth.
+Road paint (zebra crossings 169-171 / 216-264, parking bays 193-244), heaps from
+`Garbage_TileSet` and grass creeping over paving from `Grass_On-Top_TileSet` are laid
+over the ground as `Tile::overlay` (see `Art::Overlay`).
+
+Everything that makes the world look lived in is added last, by the dressing pass in
+`src/dress.cpp`, on dice of its own so it never moves the day's buildings, loot or
+raiders: vegetation colours in stands (`Tile::tone`), ground detail (`Tile::worldDeco`,
+see `Art::DecoKind`), road paint and garbage, street furniture and clutter
+(`PROP_OBJECT`, which block with their pixels like cars; see `Art::ObjectKind`),
+windows, posters and graffiti on the front walls (`PROP_WALLDECO`), and what stands on
+the flat city roofs (`World::roofProps`). `tools/make_flat_roof.py` makes the plain
+roof concrete it uses.
+
 Add or replace a PNG and it appears on the next launch — `src/art.cpp` is the one
 file that maps game concepts (trees, cars, guns, zombies, item icons) to those
 paths. Sounds work the same way: `assets/sounds/<name>.wav` overrides the
@@ -222,6 +242,7 @@ Anything the pack does not cover falls back to small procedurally drawn sprites.
 | `art.cpp` | maps game concepts to sprites in the pack |
 | `render.cpp` | sprite batching, world/glow/UI layers, lighting composite |
 | `world.cpp` | world generation, collision, line of sight, pathfinding field |
+| `dress.cpp` | the dressing pass: vegetation colours, ground detail, street furniture, roofs and fronts |
 | `raid.cpp` | the outside world: player, AI, bullets, the night |
 | `base.cpp` | the bunker and its stations, the recruiter |
 | `defense.cpp` | turret/mercenary tables and the defense console editor |
@@ -234,7 +255,10 @@ Developer flags (handy while working on the game):
 `--squad` (two hirelings), `--zombies`, `--defense`, `--recruit`, `--sleephorde=N`
 (times horde N fought offscreen and quits), `--weather=N` (hold one weather: 0 clear,
 1 hazy, 2 overcast, 3 drizzle, 4 rain, 5 storm, 6 fog, 7 rain + fog, 8 overcast + fog),
-`--shot=FILE@SECONDS`, `--screen=lang|slots|intro|credits|controls`.
+`--shot=FILE@SECONDS`, `--screen=lang|slots|intro|credits|controls`, `--seed=N` (with
+`--raid`: the same world every run), `--at=X,Y` (with `--raid`: start on that tile).
+Set `OUTBOUND_DRESS_LOG=1` to have the city blocks and buildings listed with their
+tile coordinates, handy with `--at` for looking at a particular kind of place.
 
 `--raid` and `--base` start a throwaway game and never write to a save slot.
 

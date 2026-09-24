@@ -170,6 +170,28 @@ OUTBOUND - DEVLOG (0.11v)
 
 
 
+·A WORLD THAT LOOKS LIVED IN (AND LEFT)
+
+- The cities have real streets now: sidewalks two tiles wide with a kerb along the road, zebra crossings at the junctions, stop signs on the corners, street lights along one side of every street, manholes, and litter in the gutters.
+- Every block is something: offices and shops with lawns, wild yards or paved backyards round them, car parks with their bays painted and the wrecks still in them, parks crossed by paths with benches, lamps, trees and flower beds, fenced depots full of shipping containers, and the ruins of whatever used to stand there.
+- The sidewalks are furnished: benches with a bin beside them, fire hydrants, vending machines, shopping carts, traffic cones.
+- City buildings have flat concrete roofs with air conditioners, vents, ducts, antennas and the odd hole on top, a row of windows along the front, posters and graffiti, and a striped awning over the shops' doors.
+- Some cities are kept, some are half taken back by the grass: it grows up through the cracks, creeps over the edges of the paving, and has overgrown the benches, the signs and the cars.
+- A ragged belt of dead grey scrub runs round every city, so the country does not stop dead at the first kerb, and there are patches of it out in the country too.
+- The woods grow in stands of one colour now, instead of every tree a different one: darker woods, lighter ones, a dying tree here and there, and whole copses turned orange, yellow and red for autumn.
+- Meadows are full of flowers, the grass grows in clumps, and there are mushrooms and fallen sticks under the trees, stones on the bare earth, fallen trunks, stumps and boulders in the woods.
+- Towns have bins, tyres, benches and heaps of rubbish round the houses; farms have a tractor in the yard and their fields planted in rows; warehouses stand on a paved yard with containers, pallets and drums; army camps have their containers too.
+- Cars left out in the country are overgrown with whatever grows there.
+- Rain leaves puddles on the city's paving as well.
+
+
+
+·THE HUD
+
+- Health is shown with the art pack's heart and bar, and the magazine as a row of bullets under the gun's name, spent ones greyed out (in a big magazine each bullet stands for a few rounds). The two gun slots are framed like inventory cells.
+
+
+
 ·FIXES
 
 - "Sell all valuables" at the trader only sells what is in your pockets now. It used to empty the valuables out of your stash too, so nothing could be saved for later.

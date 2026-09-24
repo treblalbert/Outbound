@@ -109,6 +109,8 @@ static void loadCredits() {
 //   --bleed              with --raid, start out bleeding
 //   --tutstep=N          with --base, open the bunker tour at step N
 //   --window=WxH         open the window at that size (e.g. 1920x1080 for store shots)
+//   --seed=N             with --raid, a fixed world seed (the same world every run)
+//   --at=X,Y             with --raid, start standing on that tile
 struct DevShot { std::string path; float at; bool done; };
 static std::vector<DevShot> g_devShots;
 // --record=FILE.mp4@START@SECONDS (trailer capture): the game steps at exactly 1/30 s a
@@ -309,6 +311,8 @@ static void applyDevArgs(int argc, char** argv) {
     }
     if (!raid) return;
     new_game();
+    for (int i = 1; i < argc; i++)   // --seed=N: the same world every run (world generation work)
+        if (std::string(argv[i]).rfind("--seed=", 0) == 0) G.prof.worldSeed = std::strtoull(argv[i] + 7, nullptr, 10);
     if (missionActive) { G.prof.mission.day = G.prof.day; G.prof.mission.type = 1; G.prof.mission.target = 5; G.prof.mission.reward = 180; }
     if (timeOverride >= 0) G.prof.timeMin = timeOverride;
     addToSlots(G.prof.inv, makeItem(IT_GRENADE, 3));
@@ -413,6 +417,14 @@ static void applyDevArgs(int argc, char** argv) {
         if (a == "--locator") G.prof.locatorDay = G.prof.day;
         if (a == "--atpuddle") { G.player.pos = Atmo::nearestPuddle(G.world, G.player.pos) + Vec2(0, -4); G.cam = G.player.pos - Vec2(R::viewW() / 2.0f, R::viewH() / 2.0f); }
         if (a == "--bloodpool") { void raid_devPool(); raid_devPool(); }
+        if (a.rfind("--at=", 0) == 0) {   // --at=X,Y: stand on that tile (world generation work)
+            int tx = 0, ty = 0;
+            if (std::sscanf(a.c_str() + 5, "%d,%d", &tx, &ty) == 2) {
+                G.player.pos = World::tileCenter(tx, ty);
+                G.cam = G.player.pos - Vec2(R::viewW() / 2.0f, R::viewH() / 2.0f);
+                G.world.reveal(G.player.pos, 20);
+            }
+        }
         if (a == "--athatch") { G.player.pos = G.world.homePos + Vec2(0, 24); G.cam = G.player.pos - Vec2(R::viewW() / 2.0f, R::viewH() / 2.0f); }
         if (a == "--atcompound") { G.player.pos = G.world.homePos + Vec2(0, 76); G.cam = G.player.pos - Vec2(R::viewW() / 2.0f, R::viewH() / 2.0f); }
         // 0.11v: --driving, --atcity, --atfloor, --atgarage, --panel=mechanic.

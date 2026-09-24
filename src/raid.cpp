@@ -92,7 +92,7 @@ Vec2 findRivalHatch(int slot) {
                 for (int yy = y - 1; yy <= y + 2 && ok; yy++)
                     for (int xx = x - 1; xx <= x + 1 && ok; xx++) {
                         const Tile& t = w.at(xx, yy);
-                        if (t.solid != S_NONE || t.ground == G_WATER || t.ground >= G_FLOOR_WOOD) ok = false;
+                        if (t.solid != S_NONE || t.ground == G_WATER || (t.ground >= G_FLOOR_WOOD && t.ground != G_WASTE)) ok = false;
                     }
                 if (ok) return World::tileCenter(x, y);
             }
@@ -3068,7 +3068,7 @@ void updateMyCar(float dt) {
     if (driving() && c->speed() > 60 && c->tyreT <= 0) {
         int tx = World::toTile(c->pos.x), ty = World::toTile(c->pos.y);
         int g = G.world.inBounds(tx, ty) ? G.world.at(tx, ty).ground : G_ROAD;
-        bool rough = g == G_GRASS || g == G_DIRT || g == G_SAND || g == G_RUBBLE;
+        bool rough = g == G_GRASS || g == G_DIRT || g == G_SAND || g == G_WASTE || g == G_RUBBLE;
         c->tyreT = rough ? 0.32f : 0.9f;
         if (rough || std::fabs(dot(c->vel, fromAngle(c->angle + PI / 2))) > 40)
             sfxAt(Snd::tyres, c->pos, G.player.pos, clampf(c->speed() / 250.0f, 0.2f, 0.6f), s_rng.range(0.8f, 1.05f));
@@ -4532,11 +4532,11 @@ void queueFlashlightOccluders() {
                 if (pi < 0) break;
                 // Only once, from the prop's own bottom-left tile.
                 const WorldProp& pr = w.props[pi];
-                Art::Piece pc = pr.kind == PROP_WRECK ? Art::wreck(pr.variant, pr.frame) : Art::car(pr.variant);
+                Art::Piece pc = Art::propArt(pr);
                 if (!pc.valid()) break;
                 const Assets::Sprite& s = *pc.sprite;
                 if (x != World::toTile(pr.pos.x - s.w * 0.5f) || y != World::toTile(pr.pos.y - 0.01f)) break;
-                R::occSprite(s.frame(pc.frame), pr.pos, (float)s.w, (float)s.h, pc.flipX != pr.flipX);
+                R::occSprite(s.frame(pc.frame), pr.pos, (float)s.w, (float)s.h, pr.kind == PROP_OBJECT ? pc.flipX : pc.flipX != pr.flipX);
                 break;
             }
             case S_STAIRS: case S_TURRET: break;   // flat, or shot over
@@ -4937,6 +4937,41 @@ float hudFade(int part, float x, float y, float w, float h) {
     return a;
 }
 
+// The pack's own HUD art (0.12v): a UI sprite at native size, `frac` of its width shown
+// (from the left), for bars that fill. False when the pack does not have it.
+static bool hudArt(const char* key, float x, float y, float frac = 1, Color c = Color()) {
+    const Assets::Sprite* s = Assets::find(std::string("ui/") + key);
+    if (!s || !s->valid()) return false;
+    Assets::Frame f = s->frame(0);
+    frac = clampf(frac, 0, 1);
+    if (frac <= 0) return true;
+    f.u1 = f.u0 + (f.u1 - f.u0) * frac;
+    f.w = (int)std::round(f.w * frac);
+    R::frame(f, x, y, s->w * frac, (float)s->h, c);
+    return true;
+}
+
+// A magazine's rounds as a strip of the pack's bullet indicators, full then spent,
+// fitted into `width` (a mark stands for several rounds in a big magazine).
+static void drawBulletStrip(const Item& w, float x, float y, float width) {
+    const WeaponDef* wd = weaponDef(w.id);
+    if (!wd) return;
+    int base = baseWeapon(w.id);
+    const char* kind = base == IT_SHOTGUN ? "shotgun" : (base == IT_PISTOL || base == IT_REVOLVER) ? "pistol" : "gun";
+    std::string full = std::string("ui/bullet indicators/small/") + kind + "-bullet_small";
+    const Assets::Sprite* on = Assets::find(full);
+    const Assets::Sprite* off = Assets::find(full + "_empty");
+    if (!on || !off) return;
+    int mag = std::max(1, magSizeOf(w));
+    int fit = std::max(1, (int)(width / (on->w + 1)));
+    int per = (mag + fit - 1) / fit;                  // rounds per mark
+    int marks = (mag + per - 1) / per, lit = (std::max(0, w.data) + per - 1) / per;
+    for (int i = 0; i < marks; i++) {
+        const Assets::Sprite* s = i < lit ? on : off;
+        R::frame(s->frame(0), x + i * (on->w + 1.0f), y, (float)s->w, (float)s->h);
+    }
+}
+
 void drawHUD() {
     Profile& p = G.prof;
     Player& pl = G.player;
@@ -4944,28 +4979,36 @@ void drawHUD() {
 
     // Vitals (and the contract and team list under them: one column).
     hudFade(HUD_LEFT, 0, 0, 200, s_leftColumnBottom);
-    UI::bar(8, 8, 90, 7, p.hp / p.maxHp(), P_CORAL);
-    if (pl.bleedT > 0) {
-        bool on = std::fmod(G.realTime, 0.9f) < 0.6f;
-        R::rectOutline(7, 7, 92, 9, pal(P_CORAL, on ? 1.0f : 0.3f));
-        Prompt::label(Prompt::Heal, T("BLEEDING"), 128, 3, pal(P_CORAL, on ? 1.0f : 0.55f));
+    // Health: the pack's heart and bar (0.12v), its channel 40 px long at (13, 4); the
+    // plain bar when the art is missing.
+    float hpFrac = clampf(p.hp / p.maxHp(), 0, 1);
+    bool bleedOn = pl.bleedT > 0 && std::fmod(G.realTime, 0.9f) < 0.6f;
+    float barX = 8, barW = 90, textX = 102;
+    R::rect(6 + 13, 6 + 4, 40, 4, pal(P_DARK, 0.85f));
+    if (hudArt("hp/hp", 6 + 10, 6 + 4, (3 + 40 * hpFrac) / 43.0f) && hudArt("hp/hp-bar", 6, 6)) {
+        barX = 6 + 13; barW = 40; textX = 6 + 58;
+        if (pl.bleedT > 0) R::rectOutline(6 + 12, 6 + 3, 42, 6, pal(P_CORAL, bleedOn ? 1.0f : 0.3f));
+    } else {
+        UI::bar(8, 8, 90, 7, hpFrac, P_CORAL);
+        if (pl.bleedT > 0) R::rectOutline(7, 7, 92, 9, pal(P_CORAL, bleedOn ? 1.0f : 0.3f));
+        R::rectOutline(7, 7, 92, 9, pal(P_DARK));
     }
-    R::rectOutline(7, 7, 92, 9, pal(P_DARK));
-    R::textShadow(std::to_string((int)std::ceil(p.hp)), 102, 8, pal(P_CORAL));
-    float yy = 19;
+    if (pl.bleedT > 0) Prompt::label(Prompt::Heal, T("BLEEDING"), textX + 26, 3, pal(P_CORAL, bleedOn ? 1.0f : 0.55f));
+    R::textShadow(std::to_string((int)std::ceil(p.hp)), textX, 8, pal(P_CORAL));
+    float yy = 21;
     if (!p.armor.empty()) {
-        UI::bar(8, yy, 90, 4, p.armor.data / float(itemDef(p.armor.id).param), P_BLUE);
-        R::rectOutline(7, yy - 1, 92, 6, pal(P_DARK));
+        UI::bar(barX, yy, barW, 4, p.armor.data / float(itemDef(p.armor.id).param), P_BLUE);
+        R::rectOutline(barX - 1, yy - 1, barW + 2, 6, pal(P_DARK));
         yy += 7;
     }
-    UI::bar(8, yy, 90, 3, pl.stamina / p.maxStamina(), P_YGREEN);
-    R::rectOutline(7, yy - 1, 92, 5, pal(P_DARK));
+    UI::bar(barX, yy, barW, 3, pl.stamina / p.maxStamina(), P_YGREEN);
+    R::rectOutline(barX - 1, yy - 1, barW + 2, 5, pal(P_DARK));
     if (s_hordeActive || p.baseHp < baseMaxHp()) {
         yy += 6;
         bool hit = s_hordeActive && std::fmod(G.realTime, 0.6f) < 0.3f && p.baseHp < baseMaxHp() * 0.35f;
-        UI::bar(8, yy, 90, 4, p.baseHp / baseMaxHp(), hit ? P_YELLOW : P_ORANGE);
-        R::rectOutline(7, yy - 1, 92, 6, pal(P_DARK));
-        R::textShadow(T("BUNKER"), 102, yy - 2, pal(P_ORANGE));
+        UI::bar(barX, yy, barW, 4, p.baseHp / baseMaxHp(), hit ? P_YELLOW : P_ORANGE);
+        R::rectOutline(barX - 1, yy - 1, barW + 2, 6, pal(P_DARK));
+        R::textShadow(T("BUNKER"), textX, yy - 2, pal(P_ORANGE));
         yy += 2;
     }
 
@@ -5055,17 +5098,20 @@ void drawHUD() {
     if (s_ride >= 0) drawCarHud();
     if (!driving()) {
     // Weapon panel, the other gun and the grenade/heal row above it.
-    hudFade(HUD_WEAPON, W - 152, H - 66, 152, 66);
+    // 0.12v: taller, with the magazine drawn round by round under the reload bar.
+    hudFade(HUD_WEAPON, W - 152, H - 84, 152, 84);
     Item& w = p.weapons[p.curWeapon];
-    float bx = W - 128, by = H - 44;
-    R::rect(bx, by, 120, 38, pal(P_DARK, 0.85f));
-    R::rectOutline(bx, by, 120, 38, pal(P_PURPLE));
+    float bx = W - 128, by = H - 62, bh = 56;
+    R::rect(bx, by, 120, bh, pal(P_DARK, 0.85f));
+    R::rectOutline(bx, by, 120, bh, pal(P_PURPLE));
     if (const WeaponDef* wd = weaponDef(w.id)) {
+        hudArt("inventory/inventory-cell", bx + 2, by + 2);
         UI::itemIcon(w.id, bx + 4, by + 4, 16);
         bool elite = itemDef(w.id).elite;
         Color tc = tierColor(itemTier(w));
         R::text(T(itemDef(w.id).name), bx + 24, by + 5, tc);
-        R::rectOutline(bx, by, 120, 38, tc.withA(0.8f));
+        R::rectOutline(bx, by, 120, bh, tc.withA(0.8f));
+        drawBulletStrip(w, bx + 4, by + 38, 112);
         if (elite) R::text(T("ELITE"), bx + 116 - R::textWidth(T("ELITE")), by + 5, pal(P_YELLOW, 0.6f + 0.4f * std::sin(G.realTime * 4.0f)));
         int reserve = countInSlots(p.inv, wd->ammo, p.invCapacity());
         std::string ammo = std::to_string(w.data);
@@ -5107,6 +5153,7 @@ void drawHUD() {
     const Item& other = p.weapons[1 - p.curWeapon];
     if (!other.empty()) {
         R::rect(bx - 22, by + 14, 20, 20, pal(P_DARK, 0.85f));
+        hudArt("inventory/inventory-cell", bx - 22, by + 14);
         UI::itemIcon(other.id, bx - 20, by + 16, 16, pal(P_LAVENDER));
         Prompt::icon(Prompt::Swap, bx - 20, by - 3, 0.9f);
     }
