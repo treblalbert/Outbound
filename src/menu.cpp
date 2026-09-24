@@ -722,7 +722,7 @@ void menu_draw() {
             if (UI::menuButton(rx, by, cw, bh, "load", T("Continue"), last >= 0) && last >= 0) s_loadSlot = last;   // next frame
             if (last >= 0 && UI::hover(rx, by, cw, bh)) UI::tooltip(T("Continue"), T1("Slot {0}", std::to_string(last + 1)));
             if (UI::button(bx, by + 25, cw, bh, T("Local co-op"))) { Local::lobbyOpen(); G.scene = Scene::LocalLobby; }
-            if (UI::button(rx, by + 25, cw, bh, T("Online co-op"))) G.scene = Scene::Lobby;
+            if (UI::button(rx, by + 25, cw, bh, T("Online co-op"))) { Net::ensureSteam(); G.scene = Scene::Lobby; }
             if (UI::button(bx, by + 50, cw, bh, T("How to play"))) { s_introThenPlay = false; G.scene = Scene::Intro; }
             if (UI::button(rx, by + 50, cw, bh, T("Controls"))) G.scene = Scene::Controls;
             if (UI::menuButton(bx, by + 75, cw, bh, "settings", T("Options"))) G.panel = Panel::Options;

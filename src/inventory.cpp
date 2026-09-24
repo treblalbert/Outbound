@@ -65,7 +65,7 @@ void compactInventory() {
 // Display order for the sort button: things you fight with first, junk last.
 static int catOrder(Cat c) {
     switch (c) {
-    case Cat::Weapon: return 0;
+    case Cat::Weapon: case Cat::Melee: return 0;
     case Cat::Ammo: return 1;
     case Cat::Medical: return 2;
     case Cat::Throwable: return 3;
@@ -104,16 +104,22 @@ static int usedInvSlots() {
     return n;
 }
 
+// The equipment slots by number: 0-1 the guns, 2 armour, 3 backpack, 4 melee (0.12v).
+static Item* equipSlot(int slot) {
+    Profile& p = G.prof;
+    return slot < 2 ? &p.weapons[slot] : slot == 2 ? &p.armor : slot == 3 ? &p.backpack : &p.melee;
+}
+
 static bool dropDraggedOnEquipment(int slot) {
     if (!g_dragSlots || g_dragIndex < 0 || g_dragIndex >= (int)g_dragSlots->size()) return false;
     Item& from = (*g_dragSlots)[g_dragIndex];
     if (from.empty()) return false;
     const Cat cat = itemDef(from.id).cat;
     if ((slot < 2 && cat != Cat::Weapon) || (slot == 2 && cat != Cat::Armor) ||
-        (slot == 3 && cat != Cat::Backpack)) return false;
+        (slot == 3 && cat != Cat::Backpack) || (slot == 4 && cat != Cat::Melee)) return false;
 
     Profile& p = G.prof;
-    Item* target = slot < 2 ? &p.weapons[slot] : slot == 2 ? &p.armor : &p.backpack;
+    Item* target = equipSlot(slot);
     if (slot == 2 && mergeArmor(from, *target)) return true;   // onto the vest you wear
     auto invBackup = p.inv;
     auto srcBackup = *g_dragSlots;
@@ -175,6 +181,10 @@ bool equipFrom(std::vector<Item>& src, int index) {
         Audio::play(Snd::pickup, 0.5f, 0.7f);
         return true;
     }
+    case Cat::Melee:
+        std::swap(src[index], p.melee);
+        Audio::play(Snd::pickup, 0.5f, 0.6f);
+        return true;
     case Cat::Medical:
         return useItemAt(src, index);
     default:
@@ -208,13 +218,13 @@ bool useItemAt(std::vector<Item>& src, int index) {
         pushMessage(T1("Used {0}", T(d.name)), P_LGREEN);
         return true;
     }
-    if (d.cat == Cat::Weapon || d.cat == Cat::Armor || d.cat == Cat::Backpack) return equipFrom(src, index);
+    if (d.cat == Cat::Weapon || d.cat == Cat::Armor || d.cat == Cat::Backpack || d.cat == Cat::Melee) return equipFrom(src, index);
     return false;
 }
 
 bool unequip(int slot, std::vector<Item>* dest, int destSlots) {
     Profile& p = G.prof;
-    Item* e = slot < 2 ? &p.weapons[slot] : slot == 2 ? &p.armor : &p.backpack;
+    Item* e = equipSlot(slot);
     if (e->empty()) return false;
     if (slot == 3) {
         compactInventory();
@@ -327,6 +337,7 @@ void drawSlotGrid(float x, float y, std::vector<Item>& slots, int count, int col
             const ItemDef& d = itemDef(slots[i].id);
             int lootedId = slots[i].id;
             bool autoEquip = (d.cat == Cat::Weapon && p.autoEquip && (p.weapons[0].empty() || p.weapons[1].empty())) ||
+                             (d.cat == Cat::Melee && p.autoEquip && p.melee.empty()) ||
                              (d.cat == Cat::Armor && p.armor.empty()) || (d.cat == Cat::Backpack && p.backpack.empty());
             if (autoEquip && equipFrom(slots, i)) { missionAddLoot(lootedId); continue; }
             if (moveItem(slots, i, p.inv, p.invCapacity()) > 0) {
@@ -376,7 +387,7 @@ void drawInventoryPanel(float x, float y, InvMode mode, std::vector<Item>* other
     const int cols = 6;
     int rows = (cap + cols - 1) / cols;
     float w = cols * SLOT + 12;
-    const float eqCell = (w - 12) / 2;      // two equipment slots per row
+    const float eqCell = (w - 12) / 3;      // three equipment slots per row: the guns and melee, then armour and pack
     const float eqRow = 30;
     const float gridY = 124;                // where the carried items start, clear of the Sort row and the auto-equip box
     bool pad = Input::usingPad();
@@ -385,11 +396,14 @@ void drawInventoryPanel(float x, float y, InvMode mode, std::vector<Item>* other
     std::string money = "$" + std::to_string(p.money);
     R::text(money, x + w - 6 - R::textWidth(money), y + 4, pal(P_YGREEN));
 
-    const char* labels[4] = {"GUN1", "GUN2", "ARMOR", "PACK"};
-    Item* eq[4] = {&p.weapons[0], &p.weapons[1], &p.armor, &p.backpack};
-    for (int i = 0; i < 4; i++) {
-        float cellX = x + 6 + (i % 2) * eqCell;
-        float sx = std::floor(cellX + (eqCell - SLOT) / 2), sy = y + 18 + (i / 2) * eqRow;
+    // Laid out GUN1 GUN2 MELEE / ARMOR PACK; the slot numbers stay 0-1 guns, 2 armour,
+    // 3 pack, 4 melee.
+    const char* labels[5] = {"GUN1", "GUN2", "ARMOR", "PACK", "MELEE"};
+    Item* eq[5] = {&p.weapons[0], &p.weapons[1], &p.armor, &p.backpack, &p.melee};
+    const int cellOf[5] = {0, 1, 3, 4, 2};
+    for (int i = 0; i < 5; i++) {
+        float cellX = x + 6 + (cellOf[i] % 3) * eqCell;
+        float sx = std::floor(cellX + (eqCell - SLOT) / 2), sy = y + 18 + (cellOf[i] / 3) * eqRow;
         int click = UI::itemSlot(sx, sy, *eq[i], i < 2 && i == p.curWeapon && !eq[i]->empty());
         std::string lab = T(labels[i]);
         R::text(lab, std::floor(cellX + (eqCell - R::textWidth(lab)) / 2), sy + SLOT + 2, pal(P_LAVENDER));
@@ -440,10 +454,10 @@ void drawInventoryPanel(float x, float y, InvMode mode, std::vector<Item>* other
     // Guns you pick up go straight into an empty gun slot, unless you would rather
     // put them there yourself (0.12v).
     {
-        std::string lab = T("Auto-equip guns");
+        std::string lab = T("Auto-equip weapons");
         if (UI::checkbox(x + 7, y + gridY - 12, p.autoEquip, lab)) { save_game(); }
         if (UI::hover(x + 5, y + gridY - 14, R::textWidth(lab) + 14, 11))
-            UI::tooltip(lab, T("On: a gun you loot goes straight into an empty gun slot. Off: it goes in your pockets."));
+            UI::tooltip(lab, T("On: a gun or melee weapon you loot goes straight into an empty slot for it. Off: it goes in your pockets."));
     }
 
     drawSlotGrid(x + 6, y + gridY, p.inv, cap, cols, mode, false);

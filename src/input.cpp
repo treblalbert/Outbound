@@ -140,6 +140,30 @@ static bool rawGamepad(int jid, int type, GLFWgamepadstate& st) {
     return true;
 }
 
+// Every joystick Windows reports, written to saves/input_log.txt whenever the set
+// changes (0.12v): name, SDL GUID, whether a mapping covers it, and how it is read.
+static void logDevices() {
+    std::string now;
+    for (int j = 0; j < MAX_PADS; j++) {
+        int jid = GLFW_JOYSTICK_1 + j;
+        if (!glfwJoystickPresent(jid)) continue;
+        int na = 0, nb = 0, nh = 0;
+        glfwGetJoystickAxes(jid, &na);
+        glfwGetJoystickButtons(jid, &nb);
+        glfwGetJoystickHats(jid, &nh);
+        const char* n = glfwGetJoystickName(jid);
+        const char* g = glfwGetJoystickGUID(jid);
+        char line[512];
+        std::snprintf(line, sizeof line, "joystick %d: \"%s\" guid %s  %s  axes %d buttons %d hats %d  -> %s\n", j, n ? n : "?", g ? g : "?",
+                      glfwJoystickIsGamepad(jid) ? "mapped" : "no mapping", na, nb, nh, g_pads[j].on ? "used as a controller" : "ignored");
+        now += line;
+    }
+    static std::string last = "-";
+    if (now == last) return;
+    last = now;
+    if (std::ofstream o(dataPath("saves/input_log.txt")); o) o << (now.empty() ? "no joysticks found\n" : now);
+}
+
 void init(GLFWwindow* w) {
     loadMappings();
     glfwSetScrollCallback(w, scrollCb);
@@ -261,6 +285,7 @@ void update(GLFWwindow* w, int pixelScale) {
         }
     }
     if (anyTouched) g_usingPad = true;
+    logDevices();
     if (g_lastPad >= 0 && !g_pads[g_lastPad].on) g_lastPad = -1;
 
     // DEV_ALL's cursor: the mouse, or the last controller's right stick in menus.

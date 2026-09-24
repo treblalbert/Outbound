@@ -287,6 +287,7 @@ struct Profile {
     Item weapons[2];
     Item armor;
     Item backpack;
+    Item melee;                  // 0.12v: the melee slot (the bat); empty = your fists
     int curWeapon = 0;
     float hp = 100;
     int raids = 0, extractions = 0, deaths = 0, kills = 0;

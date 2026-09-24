@@ -812,18 +812,17 @@ void damageEnemy(Enemy& e, float dmg, Vec2 dir);
 
 // ---- melee (0.12v): a punch, or a swing of the bat if you carry one. Short reach, a
 // wide arc in front of you, and a shove that buys a moment. It costs a little stamina.
+// A melee weapon in the melee slot (0.12v; before, any bat in your pockets counted).
 bool carryingBat() {
     const Profile& p = G.prof;
-    for (int i = 0; i < p.invCapacity(); i++)
-        if (p.inv[i].id == IT_BAT) return true;
-    return false;
+    return !p.melee.empty() && itemDef(p.melee.id).cat == Cat::Melee;
 }
 
 void melee() {
     Player& pl = G.player;
     if (pl.meleeCd > 0 || s_ride >= 0 || s_downT >= 0 || s_deathT >= 0) return;
     bool bat = carryingBat();
-    float reach = bat ? 26.0f : 19.0f, dmg = bat ? (float)itemDef(IT_BAT).param : 16.0f, push = bat ? 16.0f : 8.0f;
+    float reach = bat ? 26.0f : 19.0f, dmg = bat ? (float)itemDef(G.prof.melee.id).param : 16.0f, push = bat ? 16.0f : 8.0f;
     float cost = bat ? 10.0f : 7.0f;
     if (pl.stamina < cost * 0.5f) return;
     pl.stamina = std::max(0.0f, pl.stamina - cost);
@@ -858,6 +857,36 @@ void melee() {
                 e.pos = G.world.move(e.pos, (d / l) * (big ? push * 0.35f : push), ENEMY_R);
                 e.meleeCd = std::max(e.meleeCd, 0.45f);
             }
+        }
+    }
+    // Whatever solid stands in front takes the blow too, hit by hit like a bullet's:
+    // a way through a fence, a wall, a hedge or the trees. Fists do far less.
+    if (!hit) {
+        for (float d : {reach * 0.55f, reach * 0.9f}) {
+            Vec2 at = pl.pos + Vec2(0, 3) + f * d;
+            int tx = World::toTile(at.x), ty = World::toTile(at.y);
+            if (!G.world.inBounds(tx, ty)) continue;
+            const Tile& t = G.world.at(tx, ty);
+            if (t.solid == S_NONE) continue;
+            const SolidInfo& si = solidInfo(t.solid);
+            if (si.hp <= 0) continue;   // not breakable (the bunker, cars, barricades...)
+            float tdmg = dmg * (bat ? 1.0f : 0.35f);
+            int col = si.mapColor;
+            if (isGuest()) {
+                Net::Writer w;
+                w.u8(Coop::M_MELEE_TILE);
+                w.u16((uint16_t)tx); w.u16((uint16_t)ty);
+                w.f32(tdmg);
+                Coop::toHost(w, true);
+                addParticles(at, 3, col, 15, 50, 0.2f, 0.35f);
+                sfx(Snd::tile_hit, 0.5f, 0.8f);
+            } else {
+                bool destroyed = G.world.damageTile(tx, ty, tdmg);
+                addParticles(at, destroyed ? 10 : 4, col, 15, destroyed ? 90 : 50, 0.2f, destroyed ? 0.8f : 0.35f, false, destroyed ? 2 : 1);
+                sfx(destroyed ? Snd::tile_break : Snd::tile_hit, destroyed ? 0.7f : 0.5f, s_rng.range(0.75f, 0.95f));
+            }
+            addShake(bat ? 1.5f : 0.6f, pl.pos);
+            break;
         }
     }
     if (hit) {
@@ -6063,15 +6092,15 @@ void drawHUD() {
             float qx = std::floor(W / 2 - qa->w / 2.0f), qy = H - qa->h - 4;
             hudFade(HUD_WEAPON, qx, qy, (float)qa->w, (float)qa->h);
             R::frame(qa->frame(0), qx, qy, (float)qa->w, (float)qa->h);
-            const int ids[6] = {p.weapons[0].id, p.weapons[1].id, IT_GRENADE, IT_BANDAGE, IT_MEDKIT, IT_BAT};
+            const int ids[6] = {p.weapons[0].id, p.weapons[1].id, IT_GRENADE, IT_BANDAGE, IT_MEDKIT, p.melee.id};
             for (int i = 0; i < 6; i++) {
                 float cx = qx + i * 21.0f;
                 if (i < 2 && i == p.curWeapon && !p.weapons[i].empty()) hudArt("inventory/inventory-chosen", cx, qy);
                 int id = ids[i];
                 if (id == IT_NONE) continue;
-                int n = i < 2 ? 1 : countInSlots(p.inv, id, cap);
+                int n = i < 2 || i == 5 ? 1 : countInSlots(p.inv, id, cap);
                 UI::itemIcon(id, cx + 2, qy + 2, 15, n > 0 ? Color() : Color(1, 1, 1, 0.3f));
-                if (i >= 2 && n > 0 && id != IT_BAT) {
+                if (i >= 2 && i < 5 && n > 0) {
                     std::string c = std::to_string(n);
                     R::textShadow(c, cx + 18 - R::textWidth(c), qy + 11, pal(P_WHITE));
                 }
@@ -6223,6 +6252,7 @@ void drawLootPanel() {
                 const ItemDef& d = itemDef(c.items[i].id);
                 int lootedId = c.items[i].id;
                 bool autoEquip = (d.cat == Cat::Weapon && p.autoEquip && (p.weapons[0].empty() || p.weapons[1].empty())) ||
+                                 (d.cat == Cat::Melee && p.autoEquip && p.melee.empty()) ||
                                  (d.cat == Cat::Armor && p.armor.empty()) || (d.cat == Cat::Backpack && p.backpack.empty());
                 if (autoEquip && equipFrom(c.items, i)) { missionAddLoot(lootedId); continue; }
                 if (moveItem(c.items, i, p.inv, p.invCapacity()) > 0) missionAddLoot(lootedId);
@@ -7944,6 +7974,14 @@ void raid_netMessage(int slot, uint8_t type, Net::Reader& r) {
                 int s = G.world.at(tx, ty).solid;
                 if (s == S_FENCE || s == S_BUSH || s == S_CRATE || s == S_DOOR || s == S_SANDBAG || s == S_WALL_WOOD) G.world.destroyTile(tx, ty);
             }
+            break;
+        }
+        case M_MELEE_TILE: {
+            // A guest's melee on a wall, a fence or a tree: the ground is the host's to break.
+            int tx = r.u16(), ty = r.u16();
+            float dmg = std::min(r.f32(), 200.0f);
+            if (r.bad || !G.world.inBounds(tx, ty) || solidInfo(G.world.at(tx, ty).solid).hp <= 0) break;
+            if (G.world.damageTile(tx, ty, dmg)) addParticles(World::tileCenter(tx, ty), 10, solidInfo(S_WALL_WOOD).mapColor, 15, 90, 0.2f, 0.8f, false, 2);
             break;
         }
         case M_PVP_HIT: {

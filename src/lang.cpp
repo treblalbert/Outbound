@@ -380,8 +380,10 @@ const Entry TABLE[] = {
     {"Jewelry", "Joyas"},
     {"Canned Food", "Comida enlatada"},
     // 0.12v
-    {"Auto-equip guns", "Equipar armas al recoger"},
-    {"On: a gun you loot goes straight into an empty gun slot. Off: it goes in your pockets.", "Activado: un arma que recoges va directa a una ranura de arma libre. Desactivado: va a tus bolsillos."},
+    {"Auto-equip weapons", "Equipar armas al recoger"},
+    {"On: a gun or melee weapon you loot goes straight into an empty slot for it. Off: it goes in your pockets.", "Activado: un arma de fuego o cuerpo a cuerpo que recoges va directa a su ranura libre. Desactivado: va a tus bolsillos."},
+    {"MELEE", "C. A C."},
+    {"Put it in your melee slot and [F] swings it: harder, further, a harder knock-back, and it breaks through walls, fences and trees.", "Ponlo en tu ranura cuerpo a cuerpo y [F] lo blande: golpea mas fuerte y mas lejos, empuja mas y rompe muros, vallas y arboles."},
     {"Input device", "Dispositivo de entrada"},
     {"Default ({0})", "Predeterminado ({0})"},
     {"none", "ninguno"},

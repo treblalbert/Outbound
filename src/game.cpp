@@ -92,7 +92,7 @@ int Profile::invCapacity() const {
 void grantStarterKit() {
     Profile& p = G.prof;
     p.weapons[0] = makeItem(IT_PISTOL, 1);          // makeItem fills the magazine
-    p.weapons[1] = p.armor = p.backpack = Item();
+    p.weapons[1] = p.armor = p.backpack = p.melee = Item();
     p.curWeapon = 0;
     p.inv.assign(INV_MAX_SLOTS, Item());
     addToSlots(p.inv, makeItem(IT_AMMO_LIGHT, 60), p.invCapacity());
@@ -115,7 +115,7 @@ std::vector<Item> applyDeathLoss() {
     std::vector<Item*> held;
     int cap = p.invCapacity();
     for (int i = 0; i < cap; i++) if (!p.inv[i].empty()) held.push_back(&p.inv[i]);
-    for (Item* it : {&p.weapons[0], &p.weapons[1], &p.armor, &p.backpack}) if (!it->empty()) held.push_back(it);
+    for (Item* it : {&p.weapons[0], &p.weapons[1], &p.armor, &p.backpack, &p.melee}) if (!it->empty()) held.push_back(it);
     G.summary.carried = (int)held.size();
     // Which half goes is down to luck: every stack, gun, vest and pack counts as one.
     Rng r(mix64((uint64_t)std::time(nullptr) ^ p.worldSeed ^ ((uint64_t)p.deaths << 24) ^ (uint64_t)(p.timeMin * 13)));
@@ -1330,6 +1330,7 @@ static void writeProfile(std::ostream& o, const Profile& p) {
     o << "weapon0 "; writeItem(o, p.weapons[0]);
     o << "weapon1 "; writeItem(o, p.weapons[1]);
     o << "armor "; writeItem(o, p.armor);
+    o << "melee "; writeItem(o, p.melee);
     o << "backpack "; writeItem(o, p.backpack);
     o << "inv " << p.inv.size() << "\n";
     for (auto& it : p.inv) writeItem(o, it);
@@ -1537,6 +1538,7 @@ static bool readProfile(std::istream& in, Profile& p, bool& hadTurrets) {
         else if (key == "weapon0") p.weapons[0] = readItem(in);
         else if (key == "weapon1") p.weapons[1] = readItem(in);
         else if (key == "armor") p.armor = readItem(in);
+        else if (key == "melee") { p.melee = readItem(in); if (itemDef(p.melee.id).cat != Cat::Melee) p.melee = Item(); }
         else if (key == "backpack") p.backpack = readItem(in);
         else if (key == "daymem") in >> p.dayMem.day;
         else if (key == "dm_explored") readBytes(in, p.dayMem.explored);

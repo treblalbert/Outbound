@@ -192,6 +192,15 @@ OUTBOUND - DEVLOG (0.11v)
 
 
 
+·THE MELEE SLOT, AND STEAM LETTING GO OF THE CONTROLLER
+
+- The inventory has a MELEE slot beside the two guns. The bat (and any melee weapon to come) goes there like a gun goes in its slot, and only a weapon in that slot is swung; without one you punch. It is kept, saved and can be lost on death like the rest of your gear. The auto-equip box covers it too.
+- Melee now breaks things, hit by hit, the way bullets do: fences, wooden and brick walls, doors, crates, hedges and trees. Clear a wall or cut a path through the woods with the bat; fists can do it too, slowly. Your own barricades and the bunker are left alone. In co-op a guest's blows go to the host, who owns the ground.
+- Fixed: an Xbox controller did nothing while Steam was running. The game told Steam at startup that it was running (as app 480, Valve's Spacewar, until it has its own), and Steam then took the controller over for its own input system. Steam now starts only when you open Online co-op (or join from a Steam invite), so everything else sees the controller as a plain controller.
+- Every joystick Windows reports is written to saves/input_log.txt (name, id, whether it is mapped and whether the game uses it), for when a controller still does not show up.
+
+
+
 ·CONTROLLERS, MICROPHONES, BUTTONS
 
 - Controllers that did nothing now work. The game ships the SDL community's controller database (assets/gamecontrollerdb.txt), so PlayStation pads, third-party pads and the rest are recognised, not just the handful GLFW knows. A pad in no database at all is still read directly, with the usual layouts.

@@ -229,19 +229,35 @@ void Callbacks::onLobbyCreated(LobbyCreated_t* r, bool ioFailure) {
 #endif
 }  // namespace
 
-void init(int argc, char** argv) {
+// Steam is started only when online co-op needs it (0.12v). Once the game tells Steam
+// it is running (as app 480, Spacewar, until it has an id of its own), Steam applies
+// that app's Steam Input setup, which takes the controllers over for its own input
+// API: the game stopped seeing an Xbox pad at all. So the menus and local play never
+// start Steam; opening Online co-op (or a Steam invite on the command line) does.
+static bool s_steamTried = false;
+static void startSteam() {
 #ifdef OUTBOUND_STEAM
+    if (s_steamTried) return;
+    s_steamTried = true;
     s_steam = SteamAPI_Init();
     std::fprintf(stderr, "[net] steam %s\n", s_steam ? "ready" : "unavailable");
     if (!s_steam) return;
     s_cb = new Callbacks();
     SteamNetworkingUtils()->InitRelayNetworkAccess();
+#endif
+}
+
+void init(int argc, char** argv) {
+#ifdef OUTBOUND_STEAM
     for (int i = 1; i + 1 < argc; i++)
         if (std::string(argv[i]) == "+connect_lobby") s_pendingJoin = std::strtoull(argv[i + 1], nullptr, 10);
+    if (s_pendingJoin) startSteam();   // launched from a Steam invite
 #else
     (void)argc; (void)argv;
 #endif
 }
+
+void ensureSteam() { startSteam(); }
 
 void shutdown() {
 #ifdef OUTBOUND_STEAM
@@ -318,6 +334,7 @@ uint64_t hostId() {
 
 void hostLobby() {
 #ifdef OUTBOUND_STEAM
+    startSteam();
     if (!s_steam) { s_state = LobbyState::Failed; s_error = "Steam is not running."; return; }
     s_state = LobbyState::Creating;
     SteamAPICall_t call = SteamMatchmaking()->CreateLobby(k_ELobbyTypeFriendsOnly, MAX_MEMBERS);
@@ -327,6 +344,7 @@ void hostLobby() {
 
 void joinLobby(uint64_t lobbyId) {
 #ifdef OUTBOUND_STEAM
+    startSteam();
     if (!s_steam || !lobbyId) return;
     if (s_state == LobbyState::In) leaveLobby();
     s_state = LobbyState::Joining;

@@ -180,9 +180,11 @@ hireling who dies is gone for good, and their gun is left on the body.
 ## Fighting up close
 
 **F** (a tap of **R3** on a controller; holding R3 toggles the laser) hits whatever is
-right in front of you: a punch, or a swing of the **baseball bat** if you carry one in
-your pockets (the trader sells them, and they turn up in the world). It costs a little
-stamina, knocks the target back and puts it off its stroke. Mercenaries punch the dead
+right in front of you: a punch, or a swing of the **baseball bat** if one is in your
+inventory's **MELEE** slot (the trader sells them, and they turn up in the world). It
+costs a little stamina, knocks the target back and puts it off its stroke. Blows also
+break fences, walls, doors, crates, hedges and trees hit by hit, like bullets, so the
+bat can open a wall or cut a path through a wood. Mercenaries punch the dead
 off when they get too close to shoot.
 
 The axe zombies throw their axes at anyone a little way off, then fight bare-handed
@@ -347,6 +349,12 @@ colour; controllers aim with the right stick, with aim assist. One player works 
 at a time. Stairs, the catacombs and the hatch take the whole group. A player who
 bleeds out waits in the bunker until the others come home; if everyone bleeds out the
 day ends for all.
+
+**Controllers and Steam:** the game only starts Steam when you open Online co-op.
+While it runs as the test app 480 (Spacewar), Steam applies that app's Steam Input
+setup and can take a controller over. If a controller stops working in online co-op,
+turn Steam Input off for Spacewar in Steam (its Properties > Controller). The game writes
+the joysticks it sees to `saves/input_log.txt`.
 
 ## Co-op (Steam)
 

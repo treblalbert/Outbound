@@ -19,7 +19,7 @@ enum ItemId : int {
     IT_COUNT
 };
 
-enum class Cat { None, Valuable, Medical, Throwable, Ammo, Weapon, Armor, Backpack };
+enum class Cat { None, Valuable, Medical, Throwable, Ammo, Weapon, Armor, Backpack, Melee };   // Melee: 0.12v, its own slot
 
 struct ItemDef {
     const char* name;
