@@ -6192,10 +6192,26 @@ void drawLootPanel() {
     // need more width than twelve slots do, and it matches the inventory beside it.
     float cw = 6 * SLOT + 12, ch = 18 + 2 * SLOT + 22;
     float cx = std::floor(W / 2 - cw - 8), cy = std::floor(H / 2 - 100);
-    UI::panel(cx, cy, cw, ch, T(containerName(c.kind)));
+    // Still being searched: the pack's empty grid (UI/Inventory/Inventory_2), its cells
+    // lighting up one by one as you go through it (0.12v).
+    const Assets::Sprite* grid = c.searched ? nullptr : UI::skin("inventory/inventory_2");
+    if (grid) {
+        const Assets::Frame& f = grid->frame(0);
+        float gx = std::floor(cx + cw / 2 - f.w / 2.0f);
+        R::rect(gx + 2, cy + 2, (float)f.w, (float)f.h, pal(P_DARK, 0.6f));
+        R::frame(f, gx, cy, (float)f.w, (float)f.h);
+        float prog = clampf(G.searchT / c.searchTime, 0, 1);
+        int lit = (int)(prog * 18);
+        for (int i = 0; i < lit; i++)
+            R::rect(gx + 9 + (i % 6) * 22, cy + 14 + (i / 6) * 23, 15, 7, pal(P_YELLOW, 0.18f));
+        R::textShadow(T(containerName(c.kind)) + " - " + T("Searching..."), gx + 7, cy + 3, pal(P_BEIGE), 1, pal(P_DARK));
+        UI::bar(gx + 8, cy + f.h - 8, f.w - 16, 3, prog, P_YELLOW);
+    } else UI::panel(cx, cy, cw, ch, T(containerName(c.kind)));
     if (!c.searched) {
-        R::text(T("Searching..."), cx + 8, cy + 30, pal(P_BEIGE));
-        UI::bar(cx + 8, cy + 42, cw - 16, 4, G.searchT / c.searchTime, P_YELLOW);
+        if (!grid) {
+            R::text(T("Searching..."), cx + 8, cy + 30, pal(P_BEIGE));
+            UI::bar(cx + 8, cy + 42, cw - 16, 4, G.searchT / c.searchTime, P_YELLOW);
+        }
     } else {
         drawSlotGrid(cx + 6, cy + 18, c.items, 12, 6, InvMode::Loot, true);
         if (containerEmpty(c)) R::text(T("Empty"), cx + 8, cy + 30, pal(P_PURPLE));

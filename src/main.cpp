@@ -422,6 +422,17 @@ static void applyDevArgs(int argc, char** argv) {
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
         if (a == "--locator") G.prof.locatorDay = G.prof.day;
+        // --searching: open the nearest unsearched container, still being searched.
+        if (a == "--searching") {
+            int best = -1;
+            float bd = 1e9f;
+            for (size_t k = 0; k < G.world.containers.size(); k++) {
+                const Container& c = G.world.containers[k];
+                float d = dist(c.pos, G.player.pos);
+                if (!c.searched && !c.removed && c.searchTime > 30 * 0 + 0.5f && d < bd) { bd = d; best = (int)k; }
+            }
+            if (best >= 0) { G.world.containers[best].searchTime = 9999; G.lootContainer = best; G.searchT = 3000; G.panel = Panel::Loot; }
+        }
         if (a == "--atpuddle") { G.player.pos = Atmo::nearestPuddle(G.world, G.player.pos) + Vec2(0, -4); G.cam = G.player.pos - Vec2(R::viewW() / 2.0f, R::viewH() / 2.0f); }
         if (a == "--bloodpool") { void raid_devPool(); raid_devPool(); }
         if (a.rfind("--at=", 0) == 0) {   // --at=X,Y: stand on that tile (world generation work)

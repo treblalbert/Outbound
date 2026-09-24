@@ -249,6 +249,14 @@ windows, posters and graffiti on the front walls (`PROP_WALLDECO`), and what sta
 the flat city roofs (`World::roofProps`). `tools/make_flat_roof.py` makes the plain
 roof concrete it uses.
 
+The interface is drawn from the pack's own UI sheets (0.12v, `src/ui.cpp`): panels are
+`UI/Inventory/Inventory_1` cut in nine (corners kept, edges repeated, middle
+stretched), buttons the beige `Main Menu/Blank` (the lettered Play, Load, Save,
+Settings and Quit where the label is theirs, in English), item cells
+`Inventory-Cell` / `Inventory-Chosen`, sliders the menu `Scrollbar`, check boxes
+`Checkmark`, confirmations `Button_Yes` / `Button_No`, recipes the `Crafting` strips,
+and the HUD the `HP`, `Hunger`, `Bullet Indicators` and `Quick-Access-Inventory` art.
+
 Add or replace a PNG and it appears on the next launch — `src/art.cpp` is the one
 file that maps game concepts (trees, cars, guns, zombies, item icons) to those
 paths. Sounds work the same way: `assets/sounds/<name>.wav` overrides the
@@ -278,7 +286,11 @@ Developer flags (handy while working on the game):
 (times horde N fought offscreen and quits), `--weather=N` (hold one weather: 0 clear,
 1 hazy, 2 overcast, 3 drizzle, 4 rain, 5 storm, 6 fog, 7 rain + fog, 8 overcast + fog),
 `--shot=FILE@SECONDS`, `--screen=lang|slots|intro|credits|controls`, `--seed=N` (with
-`--raid`: the same world every run), `--at=X,Y` (with `--raid`: start on that tile).
+`--raid`: the same world every run), `--at=X,Y` (with `--raid`: start on that tile),
+`--barricades` (with `--raid` or `--defense`: a ring of walls and gates round the
+bunker), `--searching` (with `--raid`: the nearest container open, still being
+searched), `--bot` (walks in a circle, shooting and punching what comes close),
+`--local=N` (with `--raid`: N local co-op players).
 Set `OUTBOUND_DRESS_LOG=1` to have the city blocks and buildings listed with their
 tile coordinates, handy with `--at` for looking at a particular kind of place.
 
