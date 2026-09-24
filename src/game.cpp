@@ -1349,6 +1349,7 @@ static void writeProfile(std::ostream& o, const Profile& p) {
     for (int i = 0; i < DU_COUNT; i++) o << ' ' << p.defUp[i];
     o << "\nturrets " << p.turrets.size() << "\n";
     for (const Turret& t : p.turrets) o << t.dx << ' ' << t.dy << ' ' << t.type << ' ' << t.level << ' ' << t.hp << "\n";
+    o << "autoequip " << (p.autoEquip ? 1 : 0) << "\n";
     o << "barricades " << p.barricades.size() << "\n";
     for (const Barricade& b : p.barricades) o << b.dx << ' ' << b.dy << ' ' << b.type << ' ' << b.hp << "\n";
     // The dead are never written: dead is dead, even if they were still on the roster.
@@ -1438,6 +1439,7 @@ static bool readProfile(std::istream& in, Profile& p, bool& hadTurrets) {
                 if ((int)p.turrets.size() < MAX_TURRETS) p.turrets.push_back(t);
             }
         }
+        else if (key == "autoequip") { int v = 1; in >> v; p.autoEquip = v != 0; }
         else if (key == "barricades") {
             size_t n = 0;
             in >> n;

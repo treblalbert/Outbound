@@ -326,7 +326,7 @@ void drawSlotGrid(float x, float y, std::vector<Item>& slots, int count, int col
             if (click == 2) { equipFrom(slots, i); continue; }
             const ItemDef& d = itemDef(slots[i].id);
             int lootedId = slots[i].id;
-            bool autoEquip = (d.cat == Cat::Weapon && (p.weapons[0].empty() || p.weapons[1].empty())) ||
+            bool autoEquip = (d.cat == Cat::Weapon && p.autoEquip && (p.weapons[0].empty() || p.weapons[1].empty())) ||
                              (d.cat == Cat::Armor && p.armor.empty()) || (d.cat == Cat::Backpack && p.backpack.empty());
             if (autoEquip && equipFrom(slots, i)) { missionAddLoot(lootedId); continue; }
             if (moveItem(slots, i, p.inv, p.invCapacity()) > 0) {
@@ -378,7 +378,7 @@ void drawInventoryPanel(float x, float y, InvMode mode, std::vector<Item>* other
     float w = cols * SLOT + 12;
     const float eqCell = (w - 12) / 2;      // two equipment slots per row
     const float eqRow = 30;
-    const float gridY = 110;                // where the carried items start, clear of the Sort row
+    const float gridY = 124;                // where the carried items start, clear of the Sort row and the auto-equip box
     bool pad = Input::usingPad();
     float h = gridY + rows * SLOT + 26 + (pad ? 16 : 0);   // a controller gets a second row of hints
     UI::panel(x, y, w, h, T("INVENTORY"));
@@ -435,6 +435,15 @@ void drawInventoryPanel(float x, float y, InvMode mode, std::vector<Item>* other
         sortInventory();
         setNotice(T("Inventory sorted."));
         Audio::play(Snd::click, 0.5f, 1.2f);
+    }
+
+    // Guns you pick up go straight into an empty gun slot, unless you would rather
+    // put them there yourself (0.12v).
+    {
+        std::string lab = T("Auto-equip guns");
+        if (UI::checkbox(x + 7, y + gridY - 12, p.autoEquip, lab)) { save_game(); }
+        if (UI::hover(x + 5, y + gridY - 14, R::textWidth(lab) + 14, 11))
+            UI::tooltip(lab, T("On: a gun you loot goes straight into an empty gun slot. Off: it goes in your pockets."));
     }
 
     drawSlotGrid(x + 6, y + gridY, p.inv, cap, cols, mode, false);

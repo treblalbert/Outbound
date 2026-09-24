@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <sstream>
 #include <vector>
 #ifndef __EMSCRIPTEN__
@@ -33,6 +34,12 @@ int s_mode = PUSH_TO_TALK;
 float s_micGain = 1.0f, s_volume = 1.0f, s_sens = 0.5f;
 bool s_meter = false;
 float s_level = 0;
+// Which microphone (0.12v): "" follows the system's default input (on Windows the one
+// set as default in the sound settings), anything else a device by its OpenAL name.
+std::string s_micDevice;
+std::string s_openName;             // what is open now ("" = the default)
+std::string s_openDefault;          // the default's name when it was opened
+float s_devCheckT = 0;
 float s_sendHold = 0;       // open mic keeps sending a moment after you stop
 bool s_transmitting = false;
 
@@ -114,7 +121,11 @@ bool capOpen() {
     if (s_cap) return true;
     if (s_capTried && !s_capOk) return false;
     s_capTried = true;
-    s_cap = alcCaptureOpenDevice(nullptr, RATE, AL_FORMAT_MONO16, RATE);
+    s_cap = s_micDevice.empty() ? nullptr : alcCaptureOpenDevice(s_micDevice.c_str(), RATE, AL_FORMAT_MONO16, RATE);
+    s_openName = s_cap ? s_micDevice : "";
+    // The chosen one is not plugged in (or none was chosen): the default.
+    if (!s_cap) s_cap = alcCaptureOpenDevice(nullptr, RATE, AL_FORMAT_MONO16, RATE);
+    if (const ALCchar* d = alcGetString(nullptr, ALC_CAPTURE_DEFAULT_DEVICE_SPECIFIER)) s_openDefault = d;
     s_capOk = s_cap != nullptr;
     std::fprintf(stderr, s_capOk ? "[voice] microphone ready\n" : "[voice] no microphone\n");
     return s_capOk;
@@ -131,6 +142,44 @@ void capRun(bool on) {
         alcGetIntegerv(s_cap, ALC_CAPTURE_SAMPLES, 1, &n);
         std::vector<int16_t> junk((size_t)std::max(0, n));
         if (n > 0) alcCaptureSamples(s_cap, junk.data(), n);
+    }
+}
+
+// Closes the microphone so the next use opens it again (another device was picked,
+// the default changed, or it was unplugged).
+void capReset() {
+    capRun(false);
+    if (s_cap) { alcCaptureCloseDevice(s_cap); s_cap = nullptr; }
+    s_capTried = s_capOk = false;
+}
+
+// Keeps the open microphone the right one: every couple of seconds, reopen when the
+// system's default input changed (and that is what we follow), when a chosen device
+// came back, or when the one open has gone away.
+void capWatch(float dt) {
+    s_devCheckT -= dt;
+    if (s_devCheckT > 0) return;
+    s_devCheckT = 2.0f;
+    std::string def;
+    if (const ALCchar* d = alcGetString(nullptr, ALC_CAPTURE_DEFAULT_DEVICE_SPECIFIER)) def = d;
+    bool reopen = false;
+    if (s_cap) {
+        if (s_openName.empty() && def != s_openDefault) reopen = true;                         // Windows switched default
+        if (!s_micDevice.empty() && s_openName.empty()) {                                      // chosen one back again?
+            for (const std::string& n : micDevices()) if (n == s_micDevice) reopen = true;
+        }
+        if (alcIsExtensionPresent(s_cap, "ALC_EXT_disconnect")) {
+            ALCint connected = 1;
+            alcGetIntegerv(s_cap, 0x313 /* ALC_CONNECTED */, 1, &connected);
+            if (!connected) reopen = true;
+        }
+    } else if (s_capTried && !s_capOk && !def.empty()) {
+        reopen = true;   // there was no microphone; there is one now
+    }
+    if (reopen) {
+        bool was = s_capRunning;
+        capReset();
+        if (was) capRun(true);
     }
 }
 
@@ -245,6 +294,7 @@ void setSensitivity(float s) { s_sens = clampf(s, 0, 1); }
 std::string settingsText() {
     std::ostringstream o;
     o << (s_enabled ? 1 : 0) << ' ' << s_mode << ' ' << s_micGain << ' ' << s_volume << ' ' << s_sens;
+    o << " |" << s_micDevice;   // the rest of the line: the microphone's name ("" = default)
     return o.str();
 }
 
@@ -258,6 +308,11 @@ void settingsFromText(const std::string& text) {
         setMicGain(g);
         setVolume(v);
         setSensitivity(s);
+        std::string rest;
+        std::getline(in, rest);
+        size_t bar = rest.find('|');
+        s_micDevice = bar == std::string::npos ? "" : rest.substr(bar + 1);
+        while (!s_micDevice.empty() && (s_micDevice.back() == '\r' || s_micDevice.back() == ' ')) s_micDevice.pop_back();
     }
 }
 
@@ -266,6 +321,10 @@ void setMeter(bool on) { s_meter = on; }
 bool transmitting() { return s_transmitting; }
 
 #ifdef __EMSCRIPTEN__
+std::vector<std::string> micDevices() { return {}; }
+std::string defaultMicName() { return ""; }
+std::string micDevice() { return ""; }
+void setMicDevice(const std::string&) {}
 void init() {}
 void shutdown() {}
 void update(float) {}
@@ -275,6 +334,35 @@ bool talking(int) { return false; }
 #else
 
 void init() {}
+
+// Every microphone OpenAL can see, asked afresh (at most every 1.5 s): unplug one or
+// plug one in and the list follows.
+std::vector<std::string> micDevices() {
+    static std::vector<std::string> cache;
+    static double at = -10;
+    double now = glfwGetTime();
+    if (now - at < 1.5) return cache;
+    at = now;
+    cache.clear();
+    const ALCchar* list = alcGetString(nullptr, ALC_CAPTURE_DEVICE_SPECIFIER);
+    for (const ALCchar* p = list; p && *p; p += std::strlen(p) + 1) cache.push_back(p);
+    return cache;
+}
+
+std::string defaultMicName() {
+    const ALCchar* d = alcGetString(nullptr, ALC_CAPTURE_DEFAULT_DEVICE_SPECIFIER);
+    return d ? d : "";
+}
+
+std::string micDevice() { return s_micDevice; }
+
+void setMicDevice(const std::string& name) {
+    if (name == s_micDevice) return;
+    s_micDevice = name;
+    bool was = s_capRunning;
+    capReset();
+    if (was) capRun(true);
+}
 
 void shutdown() {
     capRun(false);
@@ -323,6 +411,7 @@ void update(float dt) {
     bool meter = s_meter;
     s_meter = false;          // the options panel asks again every frame it is open
     bool wantMic = s_enabled && (inGame || meter);
+    if (wantMic) capWatch(dt);
     capRun(wantMic);
     s_transmitting = false;
     if (!s_capRunning) return;

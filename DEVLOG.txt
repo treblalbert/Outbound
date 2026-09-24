@@ -192,6 +192,16 @@ OUTBOUND - DEVLOG (0.11v)
 
 
 
+·CONTROLLERS, MICROPHONES, BUTTONS
+
+- Controllers that did nothing now work. The game ships the SDL community's controller database (assets/gamecontrollerdb.txt), so PlayStation pads, third-party pads and the rest are recognised, not just the handful GLFW knows. A pad in no database at all is still read directly, with the usual layouts.
+- The local co-op lobby lists the controllers it can see, or says plainly that it sees none.
+- Options: pick your microphone from a list of every input device. The list updates as you plug things in and out. It defaults to the system's default input (on Windows, the one set as default in the sound settings) and follows it if you change that. A chosen device that is unplugged falls back to the default until it is back.
+- Inventory: an "Auto-equip guns" box. Untick it and guns you loot go in your pockets rather than straight into an empty gun slot.
+- Every button uses plain text on the same blank button, including the main menu's (no lettered ones), so they all match and translate.
+
+
+
 ·MORE OF THE PACK IN THE WORLD
 
 - Kept city parks are often railed in wrought iron (the pack's iron fence), open where the paths run out.

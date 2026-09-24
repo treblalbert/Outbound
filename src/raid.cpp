@@ -6222,7 +6222,7 @@ void drawLootPanel() {
                 if (c.items[i].empty()) continue;
                 const ItemDef& d = itemDef(c.items[i].id);
                 int lootedId = c.items[i].id;
-                bool autoEquip = (d.cat == Cat::Weapon && (p.weapons[0].empty() || p.weapons[1].empty())) ||
+                bool autoEquip = (d.cat == Cat::Weapon && p.autoEquip && (p.weapons[0].empty() || p.weapons[1].empty())) ||
                                  (d.cat == Cat::Armor && p.armor.empty()) || (d.cat == Cat::Backpack && p.backpack.empty());
                 if (autoEquip && equipFrom(c.items, i)) { missionAddLoot(lootedId); continue; }
                 if (moveItem(c.items, i, p.inv, p.invCapacity()) > 0) missionAddLoot(lootedId);

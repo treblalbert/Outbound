@@ -337,6 +337,15 @@ void drawLocalLobby(float W, float H) {
     centeredLines(T("Up to four players on one screen: controllers, or the keyboard and mouse."), W / 2, y + 18, w - 20, P_BEIGE);
     float cw = std::floor((w - 20 - 3 * 6) / 4), ch = 156, cy = y + 40;
     int lastPad = std::max(0, Input::lastPad());
+    {
+        // Which controllers the game can see right now, so a pad that is not coming
+        // through is obvious (0.12v).
+        std::string found;
+        for (int j = 0; j < Input::MAX_PADS; j++)
+            if (Input::padConnected(j)) found += (found.empty() ? "" : ", ") + Input::padName(j);
+        R::textCentered(found.empty() ? T("No controller found - plug one in (USB or Bluetooth)") : T1("Controllers: {0}", found),
+                        W / 2, cy + ch + 4, pal(found.empty() ? P_CORAL : P_LAVENDER), 1, false);
+    }
     for (int k = 0; k < Local::MAX_SEATS; k++) {
         const Local::LobbySeat& st = Local::lobbySeat(k);
         float cx = x + 10 + k * (cw + 6);

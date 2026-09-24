@@ -1,3 +1,6 @@
+#include <cstdio>
+#include <sstream>
+#include <fstream>
 #include "input.h"
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
@@ -81,7 +84,64 @@ static void keyCb(GLFWwindow*, int key, int, int action, int) {
     if (key == GLFW_KEY_BACKSPACE && (action == GLFW_PRESS || action == GLFW_REPEAT)) g_backAccum++;
 }
 
+// The SDL community's controller database (assets/gamecontrollerdb.txt): GLFW only
+// knows a handful of controllers by itself, and on Windows a PlayStation or
+// third-party pad it has no mapping for is not a "gamepad" at all, so it did nothing.
+static void loadMappings() {
+    std::ifstream in(dataPath("assets/gamecontrollerdb.txt"), std::ios::binary);
+    if (!in) return;
+    std::stringstream ss;
+    ss << in.rdbuf();
+    std::string db = ss.str();
+    if (!db.empty() && !glfwUpdateGamepadMappings(db.c_str())) std::fprintf(stderr, "[input] some controller mappings were rejected\n");
+}
+
+// A controller that no mapping covers still plays (0.12v): its raw buttons, sticks and
+// hat read with the usual DirectInput layouts - Sony's (square, cross, circle,
+// triangle...) or the common XInput-like one (A, B, X, Y, LB, RB, back, start...).
+static bool rawGamepad(int jid, int type, GLFWgamepadstate& st) {
+    int na = 0, nb = 0, nh = 0;
+    const float* ax = glfwGetJoystickAxes(jid, &na);
+    const unsigned char* bt = glfwGetJoystickButtons(jid, &nb);
+    const unsigned char* hat = glfwGetJoystickHats(jid, &nh);
+    // Enough buttons and sticks to be a pad, not a wheel, a keyboard or a mouse.
+    if (!ax || !bt || na < 4 || nb < 10) return false;
+    std::memset(&st, 0, sizeof st);
+    auto b = [&](int i) { return (unsigned char)(i < nb && bt[i] == GLFW_PRESS ? GLFW_PRESS : GLFW_RELEASE); };
+    auto a = [&](int i) { return i < na ? ax[i] : 0.0f; };
+    if (type == PAD_PLAYSTATION) {
+        st.buttons[GLFW_GAMEPAD_BUTTON_A] = b(1);  st.buttons[GLFW_GAMEPAD_BUTTON_B] = b(2);
+        st.buttons[GLFW_GAMEPAD_BUTTON_X] = b(0);  st.buttons[GLFW_GAMEPAD_BUTTON_Y] = b(3);
+        st.buttons[GLFW_GAMEPAD_BUTTON_LEFT_BUMPER] = b(4); st.buttons[GLFW_GAMEPAD_BUTTON_RIGHT_BUMPER] = b(5);
+        st.buttons[GLFW_GAMEPAD_BUTTON_BACK] = b(8); st.buttons[GLFW_GAMEPAD_BUTTON_START] = b(9);
+        st.buttons[GLFW_GAMEPAD_BUTTON_LEFT_THUMB] = b(10); st.buttons[GLFW_GAMEPAD_BUTTON_RIGHT_THUMB] = b(11);
+        st.buttons[GLFW_GAMEPAD_BUTTON_GUIDE] = b(12);
+        st.axes[GLFW_GAMEPAD_AXIS_LEFT_X] = a(0); st.axes[GLFW_GAMEPAD_AXIS_LEFT_Y] = a(1);
+        st.axes[GLFW_GAMEPAD_AXIS_RIGHT_X] = a(2); st.axes[GLFW_GAMEPAD_AXIS_RIGHT_Y] = na >= 6 ? a(5) : a(3);
+        st.axes[GLFW_GAMEPAD_AXIS_LEFT_TRIGGER] = na >= 6 ? a(3) : (b(6) ? 1.0f : -1.0f);
+        st.axes[GLFW_GAMEPAD_AXIS_RIGHT_TRIGGER] = na >= 6 ? a(4) : (b(7) ? 1.0f : -1.0f);
+    } else {
+        st.buttons[GLFW_GAMEPAD_BUTTON_A] = b(0);  st.buttons[GLFW_GAMEPAD_BUTTON_B] = b(1);
+        st.buttons[GLFW_GAMEPAD_BUTTON_X] = b(2);  st.buttons[GLFW_GAMEPAD_BUTTON_Y] = b(3);
+        st.buttons[GLFW_GAMEPAD_BUTTON_LEFT_BUMPER] = b(4); st.buttons[GLFW_GAMEPAD_BUTTON_RIGHT_BUMPER] = b(5);
+        st.buttons[GLFW_GAMEPAD_BUTTON_BACK] = b(6); st.buttons[GLFW_GAMEPAD_BUTTON_START] = b(7);
+        st.buttons[GLFW_GAMEPAD_BUTTON_LEFT_THUMB] = b(8); st.buttons[GLFW_GAMEPAD_BUTTON_RIGHT_THUMB] = b(9);
+        st.axes[GLFW_GAMEPAD_AXIS_LEFT_X] = a(0); st.axes[GLFW_GAMEPAD_AXIS_LEFT_Y] = a(1);
+        st.axes[GLFW_GAMEPAD_AXIS_RIGHT_X] = na >= 5 ? a(3) : a(2); st.axes[GLFW_GAMEPAD_AXIS_RIGHT_Y] = na >= 5 ? a(4) : a(3);
+        st.axes[GLFW_GAMEPAD_AXIS_LEFT_TRIGGER] = na >= 6 ? a(2) : -1.0f;
+        st.axes[GLFW_GAMEPAD_AXIS_RIGHT_TRIGGER] = na >= 6 ? a(5) : -1.0f;
+    }
+    // The D-pad: the first hat, or buttons past the face ones on pads without a hat.
+    unsigned char h = nh > 0 && hat ? hat[0] : 0;
+    st.buttons[GLFW_GAMEPAD_BUTTON_DPAD_UP] = (h & GLFW_HAT_UP) ? GLFW_PRESS : GLFW_RELEASE;
+    st.buttons[GLFW_GAMEPAD_BUTTON_DPAD_RIGHT] = (h & GLFW_HAT_RIGHT) ? GLFW_PRESS : GLFW_RELEASE;
+    st.buttons[GLFW_GAMEPAD_BUTTON_DPAD_DOWN] = (h & GLFW_HAT_DOWN) ? GLFW_PRESS : GLFW_RELEASE;
+    st.buttons[GLFW_GAMEPAD_BUTTON_DPAD_LEFT] = (h & GLFW_HAT_LEFT) ? GLFW_PRESS : GLFW_RELEASE;
+    return true;
+}
+
 void init(GLFWwindow* w) {
+    loadMappings();
     glfwSetScrollCallback(w, scrollCb);
     glfwSetCharCallback(w, charCb);
     glfwSetKeyCallback(w, keyCb);
@@ -152,6 +212,12 @@ void update(GLFWwindow* w, int pixelScale) {
         p.prev = p.cur;
         bool was = p.on;
         p.on = glfwJoystickIsGamepad(GLFW_JOYSTICK_1 + j) && glfwGetGamepadState(GLFW_JOYSTICK_1 + j, &p.cur);
+        if (!p.on && glfwJoystickPresent(GLFW_JOYSTICK_1 + j)) {
+            // Not in any mapping: read it raw (the type is needed for the layout).
+            std::string nm;
+            int ty = was ? p.type : detectType(GLFW_JOYSTICK_1 + j, nm);
+            p.on = rawGamepad(GLFW_JOYSTICK_1 + j, ty, p.cur);
+        }
         if (!p.on) { std::memset(&p.cur, 0, sizeof p.cur); p.prev = p.cur; p.touched = false; p.nav = -1; p.navHeld = -1; continue; }
         if (!was) { p.type = detectType(GLFW_JOYSTICK_1 + j, p.name); p.prev = p.cur; }
         p.cursorMoved = false;

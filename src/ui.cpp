@@ -338,25 +338,12 @@ float recipe(float x, float y, int result, Color resultTint, const int* ins, con
     return width;
 }
 
-// The main menu's lettered buttons (UI/Menu/Main Menu: Play, Load, Save, Settings,
-// Quit), used where the label is theirs; any other label gets the blank one.
+// The main menu's buttons. The pack also draws lettered ones (Play, Load, Save,
+// Settings, Quit), but every button keeps plain text on the same blank one so they all
+// match (and translate); `art` is kept for the callers' sake.
 bool menuButton(float x, float y, float w, float h, const char* art, const std::string& label, bool enabled) {
-    std::string up = std::string("menu/main menu/") + art + "_not-pressed", down = std::string("menu/main menu/") + art + "_pressed";
-    const Assets::Sprite* su = skin(up.c_str());
-    const Assets::Sprite* sd = skin(down.c_str());
-    // Their letters are English, so other languages get the blank one with the label.
-    if (!su || !sd || !enabled || L::get() != LANG_EN || w < su->w || h < su->h - 2) return button(x, y, w, h, label, enabled);
-    focusable(x, y, w, h);
-    bool hov = hover(x, y, w, h);
-    const Assets::Frame& f = (hov ? sd : su)->frame(0);
-    float sx = std::floor(x + (w - f.w) / 2), sy = std::floor(y + (h - su->h) / 2) + (hov ? 2 : 0);
-    R::frame(f, sx, sy, (float)f.w, (float)f.h);
-    if (hov && (Input::mousePressed(0) || (Input::gamepad() && Input::pressed(GLFW_KEY_E)))) {
-        Input::consumeMouse();
-        Audio::play(Snd::click, 0.5f);
-        return true;
-    }
-    return false;
+    (void)art;
+    return button(x, y, w, h, label, enabled);
 }
 
 // The small green tick and red cross (UI/Menu/Button_Yes, Button_No). 1 yes, 2 no.

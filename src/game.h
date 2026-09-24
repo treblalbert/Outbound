@@ -296,6 +296,7 @@ struct Profile {
     DayMission mission;       // today's mission; rerolled when the day changes
     int missionsCompleted = 0;
     bool laserUnlocked = false;
+    bool autoEquip = true;       // 0.12v: looted guns go straight into an empty gun slot
     bool laserOwned = false;     // 0.11v: has ever had a laser fitted (opens the Laser Focus upgrade)
     bool laserOn = false;        // before 0.7v: one switch for every gun (read from old saves only)
 

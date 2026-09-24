@@ -40,7 +40,7 @@ void subPanel(float x, float y, float w, float h, float scroll = -1);   // the l
 void panelScroll(float x, float y, float w, float h, const std::string& title, float scroll);
 bool closeBox(float x, float y);                                        // the inventory's X
 bool panelClose();                                                      // that X on the last titled panel
-// The main menu's lettered buttons ("play", "load", "save", "settings", "quit").
+// A main-menu button: plain text on the blank button, like every other ("art" unused).
 bool menuButton(float x, float y, float w, float h, const char* art, const std::string& label, bool enabled = true);
 int yesNo(float x, float y);                                            // 1 yes, 2 no (the tick and the cross)
 // A crafting line: result = inputs (or result < inputs, an upgrade). Returns its width.
