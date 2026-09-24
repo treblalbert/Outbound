@@ -46,10 +46,11 @@ const EnemyDef ENEMY_DEFS[6] = {
 // The three zombie kinds from the art pack, in the order Art::zombie() uses.
 struct ZombieKind { float hp, speed, damage, attackCd, reach; int bounty; };
 const ZombieKind ZOMBIE_KINDS[3] = {
-    // All of them outpace you walking (62); only a sprint (96) outruns them.
-    {45, 90, 7, 0.8f, 11, 6},       // small: quick and fragile
-    {260, 66, 24, 1.3f, 14, 25},    // big: soaks bullets, hits like a truck
-    {110, 76, 13, 1.0f, 12, 12},    // axe
+    // 0.12v: twice the health and a fifth faster than before. All of them outpace you
+    // walking (62); a sprint (96) outruns the big and the axe ones, never the small.
+    {90, 108, 7, 0.8f, 11, 6},      // small: quick and fragile
+    {520, 79, 24, 1.3f, 14, 25},    // big: soaks bullets, hits like a truck
+    {220, 91, 13, 1.0f, 12, 12},    // axe
 };
 
 constexpr float PLAYER_R = 5;

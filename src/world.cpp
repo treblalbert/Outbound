@@ -91,6 +91,9 @@ float World::lootQuality(int tx, int ty) const {
     if (outsideSize(day) <= 240) q = d / (240 * 0.55f);
     else q = clampf(d / 132.0f, 0, 1) * 0.75f + clampf((d - 132.0f) / 100.0f, 0, 1) * 0.25f;
     q = clampf(q + day * 0.022f, 0, 1);
+    // However far you walk, the first days' loot stays modest (0.12v): 0.43 on day 1,
+    // 0.73 on day 5, the whole range by day 9.
+    q = std::min(q, 0.35f + 0.075f * day);
     if (cityAt(tx, ty) >= 0) q = std::min(1.3f, q + 0.25f);
     return q;
 }
@@ -1336,7 +1339,7 @@ void cryptLoot(World& W, Rng& rng, int id, int n, bool rich) {
         if (hasTier(it) && !itemDef(it.id).elite) {
             // Down here guns come in better: epic and rare far more often, and now and
             // then an elite one.
-            if (rich && eliteOf(it.id) != IT_NONE && rng.chance(0.18f)) it = makeItem(eliteOf(it.id));
+            if (rich && eliteOf(it.id) != IT_NONE && rng.chance(0.18f * eliteGate())) it = makeItem(eliteOf(it.id));
             else it.tier = (int8_t)rollWeaponTier(rng, rich ? 2.0f : 1.6f);
         }
         addToSlots(c.items, it);
@@ -1859,6 +1862,7 @@ static void generateBelow(World& W, uint64_t seed, int day, const std::vector<Fl
 void World::generate(uint64_t seedIn, int day) {
     seed = seedIn;
     this->day = day;
+    setLootDay(day);
     Rng rng(seed);
     // From day 5 the outside is five times the size, with cities round its edge.
     w = h = outsideSize(day);

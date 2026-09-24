@@ -80,7 +80,10 @@ action (Kenney's Input Prompts), and switch the moment you pick up a controller.
 
 Guns come in Fortnite-style tiers. The trader always sells the ordinary **Uncommon**
 (green) version, which works exactly as guns always have. Guns found in the world or
-dropped by raiders roll a tier; better loot rolls better tiers.
+dropped by raiders roll a tier; better loot rolls better tiers. The days gate it: nothing
+epic turns up before day 3 and rare guns are scarce at first (about 6% of guns on day
+1), the odds reach their full range around day 8, and elite guns start on day 4.
+However far you walk, the first days' loot stays modest.
 
 | Tier | Colour | Damage | Spread | Reload | Sells for |
 | --- | --- | --- | --- | --- | --- |

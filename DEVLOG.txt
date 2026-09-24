@@ -192,6 +192,15 @@ OUTBOUND - DEVLOG (0.11v)
 
 
 
+·A HARDER START, A REAL CLIMB
+
+- The dead are tougher: twice the health they had, and a fifth faster. The small quick ones now outrun even a sprint; the big ones and the axe ones you can still get away from.
+- Good guns have to be earned over the days. On day 1 no gun is better than rare, and rare ones are scarce (about one gun in sixteen). Epic guns start turning up on day 3 and reach their full odds around day 8. Elite guns start on day 4.
+- Walking far on the first day no longer finds end-game loot: how good a place's loot can be grows with the days (and the catacombs, which open on day 3, stay the richest).
+- The same goes for the guns raiders drop, and for Zombies mode.
+
+
+
 ·FIXES
 
 - "Sell all valuables" at the trader only sells what is in your pockets now. It used to empty the valuables out of your stash too, so nothing could be saved for later.
