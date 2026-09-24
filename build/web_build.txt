@@ -1,0 +1,10 @@
+music: 12 track(s)
+
+Build OK.
+-rw-r--r-- 1 lgrhd lgrhd 2061360 Sep 16 17:27 web/outbound.data
+-rw-r--r-- 1 lgrhd lgrhd  350540 Sep 16 17:27 web/outbound.js
+-rw-r--r-- 1 lgrhd lgrhd  576157 Sep 16 17:27 web/outbound.wasm
+
+To publish on itch.io: zip the contents of web/ (index.html at the zip root)
+and tick "This file will be played in the browser".
+WEB_EXIT_0 

@@ -1,0 +1,4 @@
+sfx 1
+display 2
+binds 
+voice 0 0 1 1 0.5

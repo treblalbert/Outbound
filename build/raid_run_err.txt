@@ -1,0 +1,22 @@
+[assets] scanning C:\Users\lgrhd\Desktop\Outbound\bin\..\assets/sprites/
+[assets] 1217 images
+[assets] packed into 2048
+[assets] blitted
+[assets] sprites built
+[assets] atlas 2048x2048, 1216 sprites
+[assets] fill 0: 228 tiles
+[assets] fill 1: 181 tiles
+[assets] fill 2: 166 tiles
+[assets] fill 3: 118 tiles
+[assets] fill 4: 122 tiles
+[assets] fill 5: 4 tiles
+[assets] fill 6: 5 tiles
+[assets] fill 7: 31 tiles
+[art] trees 28 cars 67 rocks 10 deco 56 pack=1
+[art] dir down: idle 1 idleNoHands 1 run 1 gun 1 pistol 1 shotgun 1 helmet 1 zombie 1
+[art] dir up: idle 1 idleNoHands 1 run 1 gun 1 pistol 1 shotgun 1 helmet 1 zombie 1
+[art] dir side: idle 1 idleNoHands 1 run 1 gun 1 pistol 1 shotgun 1 helmet 1 zombie 1
+[art] dir side-left: idle 1 idleNoHands 1 run 1 gun 1 pistol 1 shotgun 1 helmet 1 zombie 1
+[music] 12 track(s) in assets/Music
+[music] playing: The Forgotten Atrium
+[raid] day 1: 42 spawns, nearest 47t, 6 within 60t

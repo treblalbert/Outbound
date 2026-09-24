@@ -1,0 +1,84 @@
+OUTBOUND
+========
+
+A top-down open-world extraction shooter. Leave the bunker, loot a world
+that is rebuilt fresh for every new day, and get back to the hatch before
+22:00. Miss the deadline and the night arrives with more of them than you
+can ever kill.
+
+----------------------------------------
+THE LOOP
+----------------------------------------
+
+Sleep in the bunker to save and heal. Head outside into a world generated
+from scratch for that day: terrain, towns, roads, camps, cars, loot and
+raiders -- nothing is placed by hand. Search every cabinet, locker, crate
+and corpse, then carry it all home and sell it at the trader. Spend the
+money on guns, armor, backpacks and meds, or on permanent upgrades at the
+workbench.
+
+The further you get from the hatch, the better the loot -- and the more
+people who would rather you did not take it. Every day outside is deadlier
+than the last: tougher enemies, in greater numbers, hitting harder.
+
+Duck back inside and out again on the same day and the world remembers
+what you did -- where you explored, who you killed, which containers you
+already emptied. Sleep, and it rolls a whole new one.
+
+----------------------------------------
+THE DEADLINE
+----------------------------------------
+
+Your clock runs about 16 in-game hours. The hatch seals at 22:00. If you
+are still outside when night falls, the horde spawns endlessly and hunts
+you down -- no extraction, no mercy. Die out there and you lose everything
+you were carrying.
+
+----------------------------------------
+FEATURES
+----------------------------------------
+
+* A brand-new open world every day, generated procedurally.
+* 12 weapons -- pistols, SMG, revolver, shotgun, carbine, rifle, sniper
+  and a rocket launcher -- plus grenades, armor and backpacks.
+* Fully destructible terrain: bullets chew through walls and trees,
+  explosions level everything nearby.
+* Roofed buildings you cannot see into until you step through the door.
+  Blow the walls away and the roof caves in for good.
+* Raider camps, towns, compounds and roadblocks to clear or avoid.
+* A bunker home base: bed, stash, trader and a workbench with 8 upgrade
+  lines across 3-8 levels each.
+* Daily mission board with rewards for loot runs, kill counts, weapon
+  recovery and supply retrieval.
+* Full lighting and day/night cycle -- flashlights, street lights, muzzle
+  flash and a night vibe that closes in around you.
+* Three save slots, keyboard + mouse, and full Xbox controller support.
+* Interface in English and Spanish, switchable any time.
+
+----------------------------------------
+CONTROLS
+----------------------------------------
+
+WASD      Move                  E     Interact / search
+Shift     Sprint (stamina)      Tab   Inventory
+Mouse     Aim                   M     Map
+LMB       Shoot                 G     Throw grenade
+R         Reload                H     Quick heal
+1/2/Q     Switch weapon         Esc   Pause / close
+Wheel     Cycle weapons         F11   Fullscreen
+
+Gamepads supported: left stick moves, click sprints, right stick aims and
+drives the UI cursor, RT shoots, A interacts, X reloads, Y heals.
+
+----------------------------------------
+ABOUT
+----------------------------------------
+
+Built from scratch in C++ and OpenGL, with no engine. Runs on Windows
+(64-bit) and in the browser via WebAssembly -- the web build plays right
+here on itch.io.
+
+Artwork and sound come from The Lazy Stone (Post-apocalypse Pixel Art),
+Darkworld Audio (Survival Effects) and Rusted Studio (Anemoia).
+
+By Albert Freeman.

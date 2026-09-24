@@ -1,0 +1,19 @@
+== Brick-Wall_TileSet.png  cols=6 rows=3
+tile  0 cover=64 nx25 Dx15 ux11 Rx10
+tile  1 cover=53 nx19 Dx10 ux9 kx8
+tile  2 cover=53 nx17 ux9 Dx9 kx8
+tile  3 cover=52 nx20 Dx10 kx8 Rx7
+tile  4 cover=64 nx12 ax10 Dx10 Mx9
+tile  5 cover=64 nx25 Dx14 ux12 Rx10
+tile  6 cover=64 nx26 Dx16 Rx12 ux10
+tile  7 cover= 0 
+tile  8 cover= 0 
+tile  9 cover=56 nx54 Rx2
+tile 10 cover= 0 
+tile 11 cover=64 nx39 Dx17 ux7 Rx1
+tile 12 cover=64 nx43 Dx8 kx6 ax3
+tile 13 cover= 0 
+tile 14 cover= 0 
+tile 15 cover=64 nx19 Rx13 ux10 Dx10
+tile 16 cover=64 nx18 ux13 Rx10 Dx9
+tile 17 cover=64 nx19 Rx13 Dx12 ux11

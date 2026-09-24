@@ -1,0 +1,13 @@
+== Iron-Fence_TileSet.png  cols=3 rows=4
+tile  0 cover=30 kx27 Mx3
+tile  1 cover=39 kx31 Mx8
+tile  2 cover=29 kx25 Mx4
+tile  3 cover=16 kx15 Mx1
+tile  4 cover=40 kx31 Mx9
+tile  5 cover=16 kx13 Mx3
+tile  6 cover=18 kx16 Mx2
+tile  7 cover=40 kx32 Mx7 ax1
+tile  8 cover=18 kx17 Mx1
+tile  9 cover=27 kx24 Mx3
+tile 10 cover=40 kx29 Mx11
+tile 11 cover=27 kx25 Mx2

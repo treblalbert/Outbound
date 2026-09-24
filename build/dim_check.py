@@ -1,0 +1,71 @@
+import os
+from PIL import Image
+
+base = r'C:\Users\lgrhd\Desktop\Random\assets\sprites'
+targets = [
+    'Objects\\Nature\\Green\\Tree_1_Spruce_Green.png',
+    'Objects\\Nature\\Green\\Tree_2_Spruce-Sparse_Green.png',
+    'Objects\\Nature\\Green\\Tree_3_Normal_Green.png',
+    'Objects\\Nature\\Green\\Tree_5_Big_Green.png',
+    'Objects\\Nature\\Green\\Tree_7_Birch_Green.png',
+    'Objects\\Nature\\Green\\Tree_9_Small-oak_Green.png',
+    'Objects\\Nature\\Green\\Tree-trunk_2_grass_Green.png',
+    'Objects\\Nature\\Green\\Bush_1_Green.png',
+    'Objects\\Nature\\Green\\Bush_2_Green.png',
+    'Objects\\Nature\\Dark-Green\\Tree_1_Spruce_Dark-Green.png',
+    'Objects\\Nature\\Dark-Green\\Tree_3_Normal_Dark-Green.png',
+    'Objects\\Nature\\Dark-Green\\Bush_1_Dark-Green.png',
+    'Objects\\Nature\\Flowers_Mashrooms_Other-nature-stuff\\Rocks\\Rock_2.png',
+    'Objects\\Nature\\Flowers_Mashrooms_Other-nature-stuff\\Rocks\\Rock_3.png',
+    'Objects\\Nature\\Flowers_Mashrooms_Other-nature-stuff\\Rocks\\Rocks_1.png',
+    'Objects\\Nature\\Flowers_Mashrooms_Other-nature-stuff\\Rocks\\Rocks_2.png',
+    'Objects\\Pickable\\Ammo-crate_Green.png',
+    'Objects\\Pickable\\Ammo-crate_Blue.png',
+    'Objects\\Pickable\\Ammo-crate_Red.png',
+    'Objects\\Pickable\\Bullet-box_1_Blue.png',
+    'Objects\\Pickable\\Bullet-box_1_Green.png',
+    'Objects\\Pickable\\Bullet-box_1_Red.png',
+    'Objects\\Pickable\\Canned-food.png',
+    'Objects\\Pickable\\Canned-soup.png',
+    'Objects\\Pickable\\Bandage.png',
+    'Objects\\Pickable\\Bat.png',
+    'Objects\\Pickable\\Pistol.png',
+    'Objects\\Pickable\\Shotgun.png',
+    'Objects\\Pickable\\Gun.png',
+    'Objects\\Container\\Container_1_Gray_Vertical.png',
+    'Objects\\Container\\Container_3_Gray_Horizontal.png',
+    'Objects\\Container\\Container_5_Red_Vertical.png',
+    'Objects\\Container\\Container_11_Green_Horizontal.png',
+    'Objects\\Container\\Container_9_Green_Vertical.png',
+    'Objects\\Bench_1_down.png',
+    'Objects\\Trash-bag_1.png',
+    'Objects\\Trash-bag_2.png',
+    'Objects\\Trash-can_1.png',
+    'Objects\\Garbage-Bin_1.png',
+    'Objects\\Vending-machine_Blue.png',
+    'Objects\\Cardboard_1.png',
+    'Objects\\Cardboard_2.png',
+    'Objects\\Metal-Plates.png',
+    'Objects\\Pallet_1.png',
+    'Objects\\Exhaust-pipe.png',
+    'Objects\\Traffic-cone.png',
+    'Objects\\Tire_1.png',
+    'Objects\\Manhole.png',
+    'Objects\\Buildings\\Hatch_1_Closed.png',
+    'Objects\\Buildings\\Hatch_1_Open.png',
+    'Objects\\Buildings\\Ladder_Balcony_Metal_1.png',
+    'Objects\\Refrigerator.png',
+    'Objects\\Street-Light_3_Down.png',
+    'Enemies\\Zombie_Small\\Zombie_Small_Side_Idle-Sheet6.png',
+    'Enemies\\Zombie_Axe\\Zombie_Axe_Side_Idle-Sheet6.png',
+    'Enemies\\Zombie_Big\\Zombie_Big_Side_Idle-Sheet6.png',
+    'Enemies\\Zombie_Small\\Zombie_Small_Side-Left_Idle-Sheet6.png',
+    'Character\\Main\\Idle\\Character_side_idle-Sheet6.png',
+]
+for t in targets:
+    p = os.path.join(base, t)
+    try:
+        img = Image.open(p)
+        print(f'{t}: {img.size[0]}x{img.size[1]}')
+    except Exception as e:
+        print(f'{t}: MISSING')

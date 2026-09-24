@@ -1,0 +1,2 @@
+Build OK: bin\Outbound.exe
+NATIVE_EXIT_0 

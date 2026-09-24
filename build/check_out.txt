@@ -1,0 +1,64 @@
+cases: 106, mapped frames: 140
+Beige: map (832, 608), 1976 cells painted
+Gray: map (832, 608), 1976 cells painted
+White: map (832, 608), 1976 cells painted
+Dark: map (832, 608), 1976 cells painted
+cells with no owning case: 0 []
+cases reachable by clicking the map: 51 of 106
+   not on the map: Ground / bare earth / sand, on the dry biome sheet
+   not on the map: Ground / rubble / debris left by a destroyed wall
+   not on the map: Buildings / facade / top-left corner
+   not on the map: Buildings / connected wall / mask 00: isolated
+   not on the map: Buildings / connected wall / mask 01: left
+   not on the map: Buildings / connected wall / mask 02: right
+   not on the map: Buildings / connected wall / mask 03: left + right
+   not on the map: Buildings / connected wall / mask 04: up
+   not on the map: Buildings / connected wall / mask 05: left + up
+   not on the map: Buildings / connected wall / mask 06: right + up
+   not on the map: Buildings / connected wall / mask 07: left + right + up
+   not on the map: Buildings / connected wall / mask 08: down
+   not on the map: Buildings / connected wall / mask 09: left + down
+   not on the map: Buildings / connected wall / mask 10: right + down
+   not on the map: Buildings / connected wall / mask 11: left + right + down
+   not on the map: Buildings / connected wall / mask 12: up + down
+   not on the map: Buildings / connected wall / mask 13: left + up + down
+   not on the map: Buildings / connected wall / mask 14: right + up + down
+   not on the map: Buildings / connected wall / mask 15: left + right + up + down
+   not on the map: Buildings / floor / wood floor B
+   not on the map: Buildings / floor / concrete floor B
+   not on the map: Buildings / floor / tile floor B
+   not on the map: Buildings / floor / base floor B
+   not on the map: Buildings / floor / spare
+   not on the map: Buildings / floor / spare 2
+   not on the map: Buildings / interior fallback / interior fill when no floor frame is set
+   not on the map: Brick wall / mask 00: isolated
+   not on the map: Brick wall / mask 07: left + right + up
+   not on the map: Brick wall / mask 09: left + down
+   not on the map: Brick wall / mask 11: left + right + down
+   not on the map: Brick wall / mask 13: left + up + down
+   not on the map: Brick wall / mask 14: right + up + down
+   not on the map: Brick wall / mask 15: left + right + up + down
+   not on the map: Wire fence / mask 00: isolated
+   not on the map: Wire fence / mask 01: left
+   not on the map: Wire fence / mask 02: right
+   not on the map: Wire fence / mask 07: left + right + up
+   not on the map: Wire fence / mask 09: left + down
+   not on the map: Wire fence / mask 10: right + down
+   not on the map: Wire fence / mask 11: left + right + down
+   not on the map: Wire fence / mask 13: left + up + down
+   not on the map: Wire fence / mask 14: right + up + down
+   not on the map: Wire fence / mask 15: left + right + up + down
+   not on the map: Roof / style 1 / top / left
+   not on the map: Roof / style 1 / top / middle
+   not on the map: Roof / style 1 / top / right
+   not on the map: Roof / style 1 / middle / left
+   not on the map: Roof / style 1 / middle / middle
+   not on the map: Roof / style 1 / middle / right
+   not on the map: Roof / style 2 / top / left
+   not on the map: Roof / style 2 / top / middle
+   not on the map: Roof / style 2 / top / right
+   not on the map: Roof / style 2 / middle / left
+   not on the map: Roof / style 2 / middle / middle
+   not on the map: Roof / style 2 / middle / right
+header regenerated, JSON reloaded OK
+saved build\preview_map_check.png

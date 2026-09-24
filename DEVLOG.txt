@@ -1,0 +1,180 @@
+OUTBOUND - DEVLOG (0.11v)
+
+
+·CARS
+
+- From day 5 you can own a car. Ten everyday cars from the Pixel Vehicles pack, cheapest first: Micro, Hatchback, Sedan, Station Wagon, Pickup, Jeep, Minivan, SUV, Van and Box Truck. No sports cars, no luxury cars.
+- Every car costs more than the one before it, and does more: more seats (from 2 up to 9), more health, a bigger tank, more speed and better handling. The Micro is only $2,000. The others also cost parts found out in the world: scrap, bolts, wires, duct tape, batteries, circuit boards and fuel cans, taken from your pockets.
+- Every car comes in eight colours. Pick one when you buy it, or repaint it later for $250.
+- Each car turns smoothly through 48 directions.
+- Every car is drawn at a believable size next to a person. The pack draws its models at different scales (the Micro and the Jeep came out toy-sized), so each one is scaled on its own: a small car is about twice as long as you are tall, a truck three and a half times.
+- Cars are tough: from 520 health for the Micro to 2,200 for the Box Truck. A car body takes only half of a bullet's damage and a little over half of a bite, and only a real crash hurts it; bumps and scrapes do nothing. Cars bought before this change are patched up for free.
+- A car's shadow and its contact shade start at its wheels, where it really meets the ground.
+- Cars have an engine you can hear: a low drone at idle that revs up with your speed and the pedal, lower and heavier on the big cars, fading and panning with distance for everyone else's. The key turns when you take the wheel (an empty tank only clicks), and the tyres squeal when you slide on asphalt or throw the handbrake. The pack has no engine recording, so the engine is made from its own bee buzz slowed right down, and the squeal from its crowbar scrape.
+- Driving: W to accelerate, S to brake and reverse, A and D to steer, Space for the handbrake (slide round corners with it). On a controller: RT and LT for the pedals, the left stick to steer, X for the handbrake. E gets you in and out (slow down first).
+- Cars are fastest on asphalt and paving. On grass and dirt they slow down, some more than others: the Pickup and the SUV cope well and the Jeep hardly notices.
+- The camera looks down the road ahead of you, further the faster you go. At night the headlights light the way.
+- At speed a car goes straight through fences, bushes, crates and doors (the heavier ones through sandbags and wooden walls too). Walls, trees and other cars stop it, and a hard crash damages it (and shakes up whoever is inside if it is very hard).
+- Anything you hit at speed goes down: raiders, zombies, the horde. Big zombies and heavies hurt the car a little and slow it down.
+- A car uses fuel as it drives. The gauge is on the car's panel. Pour a Fuel Can in when you stand beside it (12 litres each), or fill up at the mechanic's for $3 a litre. An empty tank still brakes, it just will not go.
+- A car shields whoever is inside: bullets, bites and blasts hit the car instead. When its health runs out it goes up in flames, throws everyone out and hurts everything around it. The burnt shell stays where it died for the rest of the day, and the mechanic can rebuild it.
+- Your car stays where you left it for the rest of the day, even if you go back into the bunker. Overnight, or if you die, the mechanic tows it back to his yard.
+- A small grey arrow at the edge of the screen shows where your car is when it is out of sight, and it is marked on the map.
+
+
+
+·PASSENGERS AND MERCENARIES
+
+- Only the driver drives. Everyone else in the car, co-op friends and mercenaries alike, can shoot out of it.
+- Your mercenaries get in with you when you drive, as long as there are seats, and shoot from the car at whatever they can see. When you get out, they get out.
+- In co-op, press E beside a friend's car to ride with them. Players get seats first, mercenaries take whatever is left. The car's name tag shows how many seats are taken.
+
+
+
+·THE MECHANIC
+
+- The first time you step outside on day 5, a man comes walking up to you: Rusty, the mechanic. He has his say (you have to hear him out), and from then on he is always at his yard.
+- His yard is just east of the bunker compound: out the gate, turn right. A paved lot, his open workshop with a GARAGE sign, and a row of bays where the car he sells you waits.
+- Press E beside him to see his cars. Owned cars can be taken out (only one at a time), repaired, filled up, repainted, or towed back to the yard from wherever you left them.
+
+
+
+·A BIGGER WORLD AND ITS CITIES
+
+- From day 5 the outside is five times the size it was, with cities all the way round the edge of it. They are too far to walk there and back before dark: you need a car.
+- Roads are wider from day 5 (three lanes, straight, without the old wobble) and clearer, with fewer wrecks and those only at the kerb. Four-lane highways run from the bunker to every city.
+- The countryside grows with it: more towns, farms, warehouses, military camps, cabins, loot and wanderers.
+- Cities are paved: a grid of four-lane streets round blocks of concrete, with lamps on the corners and wrecks from the vehicle pack along the kerbs, burnt-out or left to the weeds.
+- Most blocks hold buildings, many of them with one or two floors above the ground floor. Other blocks are car parks full of dead cars, small squares with trees, or ruins with a gang's camp.
+- Buildings with floors above have a flight of stairs against the back wall. Press E at the stairs to go up or down. Upper floors are held by their own gangs and hold better loot the higher you go.
+- Gangs patrol the city streets in groups, walking their beat round the blocks together. When one of them spots you, the whole gang turns on you.
+- High risk, better reward: loot in the cities (and on the gangs there) is a good step up from anything in the countryside.
+- The night follows you upstairs: the dead come through the walls of an upper floor too, so it is no place to hide.
+- Hordes still come from the edge of the old map round the bunker, so they arrive as quickly as before.
+
+
+
+·FLASHLIGHT SHADOWS
+
+- The flashlight's shadows are now pixel-perfect. Before, anything it lit threw a square shadow the size of its tile. Now everything throws a shadow of its own shape: barrels, crates and sandbags, furniture, containers, parked cars, wrecks and the cars people drive by their actual pixels, tree trunks and lamp posts round, walls and doors as the whole tile.
+- Whatever the beam hits is lit on the side facing you, and everything behind it stays dark.
+
+
+
+·AMBIENT SOUND
+
+- The world has a sound of its own now, under the music and the effects, with its own Ambience slider in the options.
+- Rain you can hear, louder in a downpour, duller from under a roof, with the gutters running while you are inside.
+- Birds by day, from just before sunrise to dusk, more of them among the trees and fewer in the cities; they go quiet in the rain, when a horde comes and at night.
+- A low wind gusting after dark and in storms.
+- Water dripping in the catacombs, and the pipes in the bunker.
+- Now and then a bee buzzing past on a dry day out in the fields.
+- Everything fades in and out gently as the weather, the hour and the place change.
+
+
+
+·THE CATACOMBS
+
+- The catacombs do not open until day 3. That morning, when you get up, the trader comes over from his counter with your first dungeon locator, free, and tells you what is down there - and to get ready before you go. You hear him out. The locator is not sold before day 3.
+- Only one catacomb opens each day now (it used to be three).
+- The last room has a new way back: a hall of its own that runs straight to the first room, by the stairs up.
+- It is sealed by an iron portcullis in the last room's wall. It can only be raised from inside the last room: walk up to it and press E. From the other side it stays shut, so nobody can skip the catacomb through it.
+- The bars grind up into the arch with a shake and a cloud of dust, and the gate stays open for everyone, co-op friends included.
+- The hall touches no other room on the way, so it is a quick walk back once you have cleared the place, not a shortcut in.
+- Spike traps now always make you bleed, even right after a bandage.
+- Once you have finished a catacomb (you were down there with the way back open), its entrance disappears from the map and the dungeon locator stops pointing at it for the rest of the day. If you go back down the same day, the gate is still open.
+- Footsteps in the catacombs now sound like stone floor instead of grass.
+
+
+
+·A NEW CATACOMB ENTRANCE
+
+- The stair arch outside no longer sits in a black box: it is cut out properly from the art pack and stands on its own.
+- It stands on a patch of trodden earth, with a short walk of old stone slabs up to the steps, two old pillars flanking the way, candles at its feet and a torch burning on each side of the arch.
+- After dark the torches and candles light the place up.
+
+
+
+·THE CRAFTER
+
+- A gunsmith now works in the bunker, at his bench next to the trader.
+- Upgrades are done one gun at a time. Pick any gun you have in your hands, your pockets or your stash, and choose what to do with it:
+- Rework it to the next tier: common to uncommon, uncommon to rare, rare to epic. It is expensive on purpose, in money and in gun parts (found out in the world), so good guns found outside are still worth finding. Legendary stays for the elite guns only.
+- Fit a laser pointer. The laser is no longer one purchase for every gun: each gun needs its own. L still turns it on and off.
+- Fit an extended magazine (half again as many rounds), and after that a drum magazine (twice the rounds). Launchers cannot take one.
+- Everything fitted shows in the gun's tooltip, and a gun with upgrades sells for a little more.
+- The trader no longer sells the laser pointer.
+- If you already had the laser from an older save, every gun you own keeps one.
+- The bunker tour has a new stop for the crafter.
+
+
+
+·ZOMBIES THAT MOVE LIKE A HORDE
+
+- The dead now collide with each other. They push and shove, the big ones hardly budge, and the small quick ones get squeezed around them.
+- Each one weaves a little on its way in, so a horde spreads out and piles up into a crowd instead of walking the same line one behind the other.
+- When they reach you, they bunch up around you and try to climb over each other to get a bite.
+
+
+
+·BLOOD
+
+- Every hit now throws drops of blood out the way the shot was going. They arc through the air, fall, and leave small specks on the ground (or on the wall they hit) that fade away over the next minute.
+- It works on enemies, zombies, mercenaries, you and your teammates.
+- When someone dies, there is a chance a pool of blood spreads out from under the body, pixel by pixel, from a small patch to a full pool over several seconds. Every pool has its own shape, and its edge looks fresher and brighter while it is still spreading.
+
+
+
+·REFLECTIONS
+
+- Rain puddles now reflect whatever stands over them: you, raiders, zombies, trees, cars, lamp posts, the catacomb arch. The reflection hangs upside down below the feet, ripples gently and takes a little of the sky's colour.
+- Blood pools reflect too, tinted red.
+
+
+
+·THE HATCH IS SEALED
+
+- While a horde is on, or once night has fallen, the hatch now looks sealed: the lid is down, two steel bars are dropped across it and a red lamp blinks on it.
+- The warm light over the hatch turns into a slow red pulse while it is shut.
+
+
+
+·GRENADES
+
+- Grenades are thrown, so they now fly over cars, fences, sandbags, crates, furniture and turrets.
+- Walls, doors, the catacomb walls and tree trunks still bounce them back.
+
+
+
+·LOOK AND FEEL
+
+- A very soft ambient occlusion: the ground darkens slightly right around walls and around the feet of everything standing on it (furniture, crates, pillars, trees, cars, people). It follows the real shape of each thing pixel by pixel, never a box around it. It is subtle on purpose, it just gives everything a bit more depth.
+
+
+
+·KEYBOARD, MOUSE AND CONTROLLER
+
+- You can switch between keyboard and mouse and a controller at any moment, mid-game.
+- Pressing any key now hands control back to the keyboard, not only moving the mouse.
+- The controller only takes over when it is actually used (a button, a trigger, a stick pushed or moving), so a stick that drifts a little or a button held from before no longer steals control from the mouse.
+- A drifting stick no longer turns your gun away from the mouse or walks your character.
+
+
+
+·CO-OP AND VOICE CHAT
+
+- Everything new in this version works in co-op: the gate out of the catacombs opens for everyone when anyone raises it, the crafter's work on your guns is kept in the host's save with the rest of your character, dead mercenaries stay dead for every player, and the hordes shove and pile up the same on every screen.
+- Voice chat now works in the co-op lobby: everyone waiting there hears everyone, and a small sound wave beside a name shows who is talking.
+- At the defense console you can now hear the others in the bunker (and they hear you). Before, whoever was at the console could not hear or be heard by anyone.
+- Cars work in co-op: everyone sees everyone's car, can ride in a friend's, and shoots from it. Everyone meets the mechanic once and buys their own cars.
+
+
+
+·FIXES
+
+- "Sell all valuables" at the trader only sells what is in your pockets now. It used to empty the valuables out of your stash too, so nothing could be saved for later.
+- It also no longer sells gun parts: they are what the crafter needs.
+- A mercenary killed outside (in the catacombs, for example) could stay on the roster as if alive: still standing in the bunker, but impossible to send out or to set to guard. The dead are now always taken off the roster and never saved, so dead is dead for everyone.
+- Mercenaries fight back properly now. Raiders shot by your mercenaries used to stand there and do nothing until you fired as well: their gunfire was never heard, raiders did not look for a shooter they could not see, and they would only fire at a mercenary who was on your screen. Now their shots are heard like yours, a raider that gets hit goes looking for whoever shot it, and it fights the mercenary wherever they are.
+- A finished contract stays finished. Once you had handed the goods over and been paid, the mission board still showed the contract's title and its counters (0/2 medkits, since you no longer had them). It now shows the contract as complete and paid.
+- "Sell all valuables" at the trader no longer sells what your contract asks for. If today's contract wants 2 batteries, it keeps as many as you still need in your pockets (counting what is already in your stash or hands) and sells the rest.

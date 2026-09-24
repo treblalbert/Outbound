@@ -1,0 +1,29 @@
+[data] assets from C:\Users\lgrhd\Desktop\Outbound\bin\, saves in C:\Users\lgrhd\Desktop\Outbound\bin\..\
+[assets] scanning C:\Users\lgrhd\Desktop\Outbound\bin\assets/sprites/
+[assets] 2167 images
+[assets] packed into 8192
+[assets] blitted
+[assets] sprites built
+[assets] atlas 8192x8192, 2166 sprites
+[assets] fill 0: 228 tiles
+[assets] fill 1: 181 tiles
+[assets] fill 2: 166 tiles
+[assets] fill 3: 118 tiles
+[assets] fill 4: 122 tiles
+[assets] fill 5: 4 tiles
+[assets] fill 6: 5 tiles
+[assets] fill 7: 31 tiles
+[art] trees 28 cars 67 rocks 10 deco 56 pack=1
+[art] dir down: idle 1 idleNoHands 1 run 1 gun 1 pistol 1 shotgun 1 helmet 1 zombie 1
+[art] dir up: idle 1 idleNoHands 1 run 1 gun 1 pistol 1 shotgun 1 helmet 1 zombie 1
+[art] dir side: idle 1 idleNoHands 1 run 1 gun 1 pistol 1 shotgun 1 helmet 1 zombie 1
+[art] dir side-left: idle 1 idleNoHands 1 run 1 gun 1 pistol 1 shotgun 1 helmet 1 zombie 1
+[music] 12 track(s) in assets/Music
+[music] playing: The Smell Of An Abandoned Office
+[world] day 1: 240x240, 0 cities, 0 floors, 53 spawns, 108 containers, 42 props
+Setting breakpad minidump AppID = 480
+SteamInternal_SetMinidumpSteamID:  Caching Steam ID:  76561198105023069 [API loaded no]
+[net] steam ready
+[crypt] day 5 (tier 0.21): 1 catacombs, 39 below
+[world] day 5: 536x536, 5 cities, 29 floors, 738 spawns, 674 containers, 417 props
+[raid] day 5: 738 spawns, nearest 64t, 0 within 60t

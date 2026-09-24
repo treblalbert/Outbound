@@ -1,0 +1,31 @@
+[data] assets from C:\Users\lgrhd\Desktop\Outbound\bin\, saves in C:\Users\lgrhd\Desktop\Outbound\bin\..\
+[assets] scanning C:\Users\lgrhd\Desktop\Outbound\bin\assets/sprites/
+[assets] 2167 images
+[assets] packed into 4096
+[assets] blitted
+[assets] sprites built
+[assets] atlas 4096x4096, 2166 sprites
+[assets] fill 0: 228 tiles
+[assets] fill 1: 181 tiles
+[assets] fill 2: 166 tiles
+[assets] fill 3: 118 tiles
+[assets] fill 4: 122 tiles
+[assets] fill 5: 4 tiles
+[assets] fill 6: 5 tiles
+[assets] fill 7: 31 tiles
+[art] trees 28 cars 67 rocks 10 deco 56 pack=1
+[art] dir down: idle 1 idleNoHands 1 run 1 gun 1 pistol 1 shotgun 1 helmet 1 zombie 1
+[art] dir up: idle 1 idleNoHands 1 run 1 gun 1 pistol 1 shotgun 1 helmet 1 zombie 1
+[art] dir side: idle 1 idleNoHands 1 run 1 gun 1 pistol 1 shotgun 1 helmet 1 zombie 1
+[art] dir side-left: idle 1 idleNoHands 1 run 1 gun 1 pistol 1 shotgun 1 helmet 1 zombie 1
+[music] 12 track(s) in assets/Music
+[world] day 1: 240x240, 0 cities, 0 floors, 57 spawns, 114 containers, 37 props
+Setting breakpad minidump AppID = 480
+SteamInternal_SetMinidumpSteamID:  Caching Steam ID:  76561198105023069 [API loaded no]
+[net] steam ready
+[crypt] day 6 (tier 0.26): 1 catacombs, 61 below
+[world] day 6: 536x536, 5 cities, 25 floors, 852 spawns, 588 containers, 452 props
+[raid] day 6: 852 spawns, nearest 46t, 15 within 60t
+[perf] update avg 0.25 ms, worst 5.31 ms, 852 enemies
+[perf] update avg 0.21 ms, worst 0.40 ms, 852 enemies
+[perf] update avg 0.22 ms, worst 5.35 ms, 852 enemies

@@ -1,0 +1,52 @@
+src/audio.cpp:34:40: warning: empty character constant [-Winvalid-pp-token]
+   34 |         m.name = f.replace(/\.[^.]+$/, '');
+      |                                        ^
+src/audio.cpp:21:1: warning: unknown escape sequence '\.' [-Wunknown-escape-sequence]
+   21 | EM_JS(void, web_music_init, (float vol), {
+      | ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+   22 |     if (Module.__music) return;
+      |     ~~~~~~~~~~~~~~~~~~~~~~~~~~~
+   23 |     var m = {el: new Audio(), list: [], idx: -1, vol: vol, started: false, name: ""};
+      |     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+   24 |     Module.__music = m;
+      |     ~~~~~~~~~~~~~~~~~~~
+   25 |     m.el.volume = vol;
+      |     ~~~~~~~~~~~~~~~~~~
+   26 |     m.el.addEventListener('ended', function() { Module.__musicNext(); });
+      |     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+   27 |     Module.__musicNext = function() {
+      |     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+   28 |         if (!m.list.length) return;
+      |         ~~~~~~~~~~~~~~~~~~~~~~~~~~~
+   29 |         var n = m.idx;
+      |         ~~~~~~~~~~~~~~
+   30 |         if (m.list.length === 1) n = 0;
+      |         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+   31 |         else while (n === m.idx) n = Math.floor(Math.random() * m.list.length);
+      |         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+   32 |         m.idx = n;
+      |         ~~~~~~~~~~
+   33 |         var f = m.list[n];
+      |         ~~~~~~~~~~~~~~~~~~
+   34 |         m.name = f.replace(/\.[^.]+$/, '');
+      |         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+   35 |         m.el.src = 'music/' + encodeURIComponent(f);
+      |         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+   36 |         var pr = m.el.play();
+      |         ~~~~~~~~~~~~~~~~~~~~~
+C:\emsdk\upstream\emscripten\cache\sysroot/include\emscripten\em_js.h:71:71: note: expanded from macro 'EM_JS'
+   71 | #define EM_JS(ret, name, params, ...) _EM_JS(ret, name, name, params, #__VA_ARGS__)
+      |                                                                       ^~~~~~~~~~~~
+<scratch space>:315:456: note: expanded from here
+  315 | "{ if (Module.__music) return; var m = {el: new Audio(), list: [], idx: -1, vol: vol, started: false, name: \"\"}; Module.__music = m; m.el.volume = vol; m.el.addEventListener('ended', function() { Module.__musicNext(); }); Module.__musicNext = function() { if (!m.list.length) return; var n = m.idx; if (m.list.length === 1) n = 0; else while (n === m.idx) n = Math.floor(Math.random() * m.list.length); m.idx = n; var f = m.list[n]; m.name = f.replace(/\.[^.]+$/, ''); m.el.src = 'music/' + encodeURIComponent(f); var pr = m.el.play(); if (pr && pr.catch) pr.catch(function() {}); }; var begin = function() { if (m.started || !m.list.length) return; m.started = true; Module.__musicNext(); }; ['pointerdown', 'keydown'].forEach(function(e) { window.addEventListener(e, begin, {once: false}); }); fetch('music/tracks.json').then(function(r) { return r.json(); }).then(function(j) { m.list = j || []; begin(); }).catch(function() {}); }"
+      |                                                                                                                                                                                                                                                                                                                                                                                                                                                                        ^~
+C:\emsdk\upstream\emscripten\cache\sysroot/include\emscripten\em_js.h:68:20: note: expanded from macro '_EM_JS'
+   68 |     #params "<::>" code;                                                       \
+      |                    ^~~~
+src/audio.cpp:232:29: warning: unused variable 'dir' [-Wunused-variable]
+  232 |     for (const std::string& dir : {dataPath("assets/Music/"), dataPath("assets/Music\\"),
+      |                             ^~~
+src/audio.cpp:200:13: warning: unused variable 'g_musicOpen' [-Wunused-variable]
+  200 | static bool g_musicOpen = false;
+      |             ^~~~~~~~~~~
+4 warnings generated.
