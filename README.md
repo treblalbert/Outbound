@@ -295,6 +295,28 @@ menu** from the pause screen) keeps the raid: Continue puts you back outside at 
 time and place, with what you carried, what you looted and who you killed. Only
 **Abandon raid** throws the trip away.
 
+## Local co-op
+
+Up to four players on one screen. **Local co-op** on the main menu opens the lobby:
+
+* A controller (Xbox or PlayStation) joins with **A / Cross** or **START / OPTIONS** and
+  leaves with **B / Circle**; the keyboard and mouse join with **ENTER** (or the *Join
+  with keyboard* button) and leave with **BACKSPACE**. Left and right pick a shirt.
+  Every place shows its own device's buttons.
+* Player 1 is whoever joined first and plays the save's own character; they start with
+  **START / ENTER** once there is a second player, then pick the save slot.
+* In the game a free controller can still drop in with **START** (or the keyboard with
+  **ENTER**), and a player drops out from their pause menu.
+
+Everyone shares the world and one camera that follows the group and pulls back (as far
+as the *co-op zoom* option lets it) to keep everyone in view; nobody can walk off it.
+Each player has a card along the bottom (health, stamina, gun and magazine, grenades
+and medicine), their own prompts in their own buttons, and their own pointer in their
+colour; controllers aim with the right stick, with aim assist. One player works a menu
+at a time. Stairs, the catacombs and the hatch take the whole group. A player who
+bleeds out waits in the bunker until the others come home; if everyone bleeds out the
+day ends for all.
+
 ## Co-op (Steam)
 
 Up to eight players share one host's world. Pick **Co-op** in the main menu, then

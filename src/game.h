@@ -24,7 +24,7 @@ constexpr int INV_MAX_SLOTS = 48;
 constexpr int GAMEPLAY_INV_MAX = 32;   // 8 base + 16 Deep Pockets + 8 large pack
 constexpr int BASE_INV_SLOTS = 8;
 
-enum class Scene { Menu, Credits, Controls, Intro, Slots, Base, Raid, Defense, Lobby, Splash };
+enum class Scene { Menu, Credits, Controls, Intro, Slots, Base, Raid, Defense, Lobby, Splash, LocalLobby };
 
 enum class Panel {
     None, Inventory, Loot, Map, Pause, Controls, Stash, Trader, Workbench, Bed, ExitConfirm, Summary, ConfirmNewGame, QuitConfirm, Mission, Recruit, Tutorial, Options, CryptIntro, Crafter,

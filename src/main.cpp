@@ -11,6 +11,7 @@
 #include "gl.h"
 #include "input.h"
 #include "lang.h"
+#include "local.h"
 #include "render.h"
 #include "sprites.h"
 #include "ui.h"
@@ -111,6 +112,7 @@ static void loadCredits() {
 //   --window=WxH         open the window at that size (e.g. 1920x1080 for store shots)
 //   --seed=N             with --raid, a fixed world seed (the same world every run)
 //   --at=X,Y             with --raid, start standing on that tile
+//   --local=N            with --raid, N local co-op players (extras on controller slots)
 struct DevShot { std::string path; float at; bool done; };
 static std::vector<DevShot> g_devShots;
 // --record=FILE.mp4@START@SECONDS (trailer capture): the game steps at exactly 1/30 s a
@@ -425,6 +427,7 @@ static void applyDevArgs(int argc, char** argv) {
                 G.world.reveal(G.player.pos, 20);
             }
         }
+        if (a.rfind("--local=", 0) == 0) Local::devSeats(std::atoi(a.c_str() + 8));   // --local=N: local co-op test
         if (a == "--athatch") { G.player.pos = G.world.homePos + Vec2(0, 24); G.cam = G.player.pos - Vec2(R::viewW() / 2.0f, R::viewH() / 2.0f); }
         if (a == "--atcompound") { G.player.pos = G.world.homePos + Vec2(0, 76); G.cam = G.player.pos - Vec2(R::viewW() / 2.0f, R::viewH() / 2.0f); }
         // 0.11v: --driving, --atcity, --atfloor, --atgarage, --panel=mechanic.
@@ -500,6 +503,10 @@ void frame() {
     Net::update();
     Coop::update(dt);
     Voice::update(dt);
+    // Local co-op (0.12v): players dropping in and out, and the lobby's players joining
+    // once the game it started has loaded.
+    if (Local::planPending()) Local::applyPlan();
+    Local::update(dt);
 
     // A controller drives menus and panels by jumping between their widgets (see
     // UI::padNavigate); gameplay keeps the sticks for moving and aiming.
@@ -517,6 +524,7 @@ void frame() {
     case Scene::Slots:
     case Scene::Lobby:
     case Scene::Splash:
+    case Scene::LocalLobby:
         menu_update(dt);
         if (G.scene == Scene::Base) base_draw();
         else menu_draw();

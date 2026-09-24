@@ -12,6 +12,8 @@
 
 namespace Local {
 
+constexpr int DEV_KBM_LOBBY = Input::DEV_KBM;
+
 namespace {
 // A seat's copy of the one-player state. Seat 0's lives in the globals; while another
 // seat has its turn, the two are swapped, so this then holds seat 0's (see swapSeat).
@@ -334,6 +336,120 @@ void end() {
     std::fprintf(stderr, "[local] session over\n");
 }
 
+// ---------------------------------------------------------------- the lobby (0.12v)
+namespace {
+LobbySeat s_lobby[MAX_SEATS];
+bool s_lobbyOn = false;
+LobbySeat s_plan[MAX_SEATS];
+bool s_planOn = false;
+
+int lobbySeatOf(int device) {
+    for (int k = 0; k < MAX_SEATS; k++) if (s_lobby[k].used && s_lobby[k].device == device) return k;
+    return -1;
+}
+// Player 1 is the first seat taken; the others fill in behind.
+int lobbyFree() {
+    for (int k = 0; k < MAX_SEATS; k++) if (!s_lobby[k].used) return k;
+    return -1;
+}
+void lobbyJoin(int device) {
+    int k = lobbyFree();
+    if (k < 0 || lobbySeatOf(device) >= 0) return;
+    s_lobby[k].used = true;
+    s_lobby[k].device = device;
+    // A shirt nobody else in the lobby has on.
+    int shirt = (k * 3) % Assets::SHIRT_COUNT;
+    for (int tries = 0; tries < Assets::SHIRT_COUNT; tries++) {
+        bool taken = false;
+        for (int j = 0; j < MAX_SEATS; j++) if (j != k && s_lobby[j].used && s_lobby[j].shirt == shirt) taken = true;
+        if (!taken) break;
+        shirt = (shirt + 1) % Assets::SHIRT_COUNT;
+    }
+    s_lobby[k].shirt = shirt;
+    Audio::play(Snd::click, 0.8f, 1.1f);
+}
+void lobbyLeave(int k) {
+    if (k < 0 || !s_lobby[k].used) return;
+    s_lobby[k] = LobbySeat();
+    // Everyone behind moves up a place, so player 1 is always the first seat.
+    for (int j = k; j + 1 < MAX_SEATS; j++) std::swap(s_lobby[j], s_lobby[j + 1]);
+    Audio::play(Snd::click, 0.6f, 0.8f);
+}
+void lobbyShirt(int k, int dir) {
+    int n = Assets::SHIRT_COUNT;
+    s_lobby[k].shirt = ((s_lobby[k].shirt + dir) % n + n) % n;
+    Audio::play(Snd::click, 0.4f, 1.3f);
+}
+}  // namespace
+
+void lobbyOpen() {
+    for (LobbySeat& st : s_lobby) st = LobbySeat();
+    s_lobbyOn = true;
+}
+void lobbyJoinKeyboard() { if (s_lobbyOn) lobbyJoin(DEV_KBM_LOBBY); }
+void lobbyClose() { s_lobbyOn = false; for (LobbySeat& st : s_lobby) st = LobbySeat(); }
+const LobbySeat& lobbySeat(int k) { static LobbySeat none; return k >= 0 && k < MAX_SEATS ? s_lobby[k] : none; }
+int lobbyCount() { int n = 0; for (const LobbySeat& st : s_lobby) n += st.used ? 1 : 0; return n; }
+bool lobbyReady() { return lobbyCount() >= 2; }
+
+bool lobbyUpdate() {
+    if (!s_lobbyOn) return false;
+    bool start = false;
+    // Controllers: A or START joins, B leaves, left / right the shirt, START (player 1) starts.
+    for (int j = 0; j < Input::MAX_PADS; j++) {
+        int k = lobbySeatOf(j);
+        if (k >= 0 && !Input::padConnected(j)) { lobbyLeave(k); continue; }
+        if (!Input::padConnected(j)) continue;
+        if (k < 0) {
+            if (Input::padButtonPressed(j, GLFW_GAMEPAD_BUTTON_A) || Input::padButtonPressed(j, GLFW_GAMEPAD_BUTTON_START)) lobbyJoin(j);
+            continue;
+        }
+        if (Input::padButtonPressed(j, GLFW_GAMEPAD_BUTTON_B)) { lobbyLeave(k); continue; }
+        if (Input::padButtonPressed(j, GLFW_GAMEPAD_BUTTON_DPAD_LEFT)) lobbyShirt(k, -1);
+        if (Input::padButtonPressed(j, GLFW_GAMEPAD_BUTTON_DPAD_RIGHT)) lobbyShirt(k, +1);
+        if (k == 0 && Input::padButtonPressed(j, GLFW_GAMEPAD_BUTTON_START) && lobbyReady()) start = true;
+    }
+    // The keyboard and mouse.
+    int kb = lobbySeatOf(DEV_KBM_LOBBY);
+    if (kb < 0) {
+        if (Input::keyPressed(GLFW_KEY_ENTER) || Input::keyPressed(GLFW_KEY_SPACE)) lobbyJoin(DEV_KBM_LOBBY);
+    } else {
+        if (Input::keyPressed(GLFW_KEY_BACKSPACE)) lobbyLeave(kb);
+        else {
+            if (Input::keyPressed(GLFW_KEY_LEFT) || Input::keyPressed(GLFW_KEY_A)) lobbyShirt(kb, -1);
+            if (Input::keyPressed(GLFW_KEY_RIGHT) || Input::keyPressed(GLFW_KEY_D)) lobbyShirt(kb, +1);
+            if (kb == 0 && Input::keyPressed(GLFW_KEY_ENTER) && lobbyReady()) start = true;
+        }
+    }
+    return start;
+}
+
+void lobbyCommit() {
+    for (int k = 0; k < MAX_SEATS; k++) s_plan[k] = s_lobby[k];
+    s_planOn = lobbyCount() >= 2;
+    s_lobbyOn = false;
+}
+bool planPending() { return s_planOn; }
+void cancelPlan() { s_planOn = false; }
+
+void applyPlan() {
+    if (!s_planOn) return;
+    if (Coop::online() || (G.scene != Scene::Base && G.scene != Scene::Raid)) return;
+    s_planOn = false;
+    if (s_on) end();
+    startSession(s_plan[0].device);
+    for (int k = 1; k < MAX_SEATS; k++) {
+        if (!s_plan[k].used) continue;
+        join(s_plan[k].device);
+        // The shirt they picked in the lobby.
+        if (s_seats[k].used && s_seats[k].prof) {
+            s_seats[k].prof->shirt = s_plan[k].shirt;
+            Coop::player(k).shirt = s_plan[k].shirt;
+        }
+    }
+    publishSeats();
+}
+
 // ---------------------------------------------------------------- everyone, as others see them
 void publishSeats() {
     if (!active()) return;
@@ -398,6 +514,19 @@ Vec2 leash(Vec2 from, Vec2 to) {
         return away ? f : t;
     };
     return Vec2(axis(from.x, to.x, lo.x, hi.x, maxW), axis(from.y, to.y, lo.y, hi.y, maxH));
+}
+
+void devSeats(int n) {
+    if (Coop::online() || n < 2) return;
+    if (!s_on) startSession(Input::DEV_KBM);
+    for (int j = 0; j < n - 1 && freeSeat() >= 0; j++) {
+        join(j);
+        int k = 0;
+        for (int i = 0; i < MAX_SEATS; i++) if (s_seats[i].used && s_seats[i].device == j) k = i;
+        Vec2 at = playerOf(0).pos + Vec2(k % 2 ? 90.0f : -90.0f, k >= 2 ? 60.0f : -30.0f);
+        with(k, [&] { G.player.pos = at; G.player.angle = (float)k; });
+    }
+    publishSeats();
 }
 
 }  // namespace Local

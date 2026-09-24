@@ -192,6 +192,15 @@ OUTBOUND - DEVLOG (0.11v)
 
 
 
+·LOCAL CO-OP
+
+- Up to four players on one screen, each on a controller (Xbox or PlayStation) or the keyboard and mouse. Local co-op on the main menu opens a lobby: press A / Cross or START to take a place, B / Circle to leave it, left and right to pick a shirt; the keyboard joins with ENTER. Each place shows its own buttons. Player 1 starts, then picks the save.
+- Out in the world: one camera that follows the whole group and pulls back to keep everyone on screen, a card for each player along the bottom (health, stamina, gun and magazine, grenades and medicine), each player's prompts in their own buttons, and their own pointer in their colour. Controllers aim with the right stick, with a little aim assist.
+- One player works a menu at a time; the others keep playing. A free controller can still drop in during the game with START, and anyone can drop out from their pause menu.
+- The group sticks together: the stairs, the catacombs and the hatch take everyone. A player who bleeds out waits in the bunker for the others; if everyone goes down, the day is over for all of you.
+
+
+
 ·A HARDER START, A REAL CLIMB
 
 - The dead are tougher: twice the health they had, and a fifth faster. The small quick ones now outrun even a sprint; the big ones and the axe ones you can still get away from.
