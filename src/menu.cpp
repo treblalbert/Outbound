@@ -7,6 +7,7 @@
 #include "net.h"
 #include "input.h"
 #include "lang.h"
+#include "local.h"
 #include "prompt.h"
 #include "options.h"
 #include "sprites.h"
@@ -21,6 +22,7 @@ using namespace Sprites;
 namespace {
 float s_menuClock = 9 * 60;
 float s_creditsScroll = 0;
+int s_loadSlot = -1;           // the main menu's Load, done at the start of the next update
 bool s_langPicker = false;     // language panel open over the main menu
 bool s_introThenPlay = false;  // the intro was opened by starting a new game
 int s_confirmSlot = -1;        // slot waiting on a confirmation
@@ -32,6 +34,7 @@ int s_charShirt = 0;
 bool s_charFocus = false;      // the name box has the keyboard
 bool s_charEdit = false;       // lobby: the character editor is open
 bool s_coopPick = false;       // the slot list is picking a save to host co-op with
+bool s_localPick = false;      // the slot list is picking a save for the local lobby's players (0.12v)
 
 std::vector<std::string> wrap(const std::string& line, float maxW) {
     std::vector<std::string> out;
@@ -263,7 +266,7 @@ void drawLobby(float W, float H) {
         float cw = 300, ch = 110, cx = std::floor(W / 2 - cw / 2), cy = std::floor(H / 2 - ch / 2);
         UI::panel(cx, cy, cw, ch, T("YOUR CHARACTER"));
         drawCharacterEditor(cx + 10, cy + 20, cw - 20);
-        if (UI::button(cx + 10, cy + ch - 22, 90, 16, T("Save"), true, P_YGREEN)) {
+        if (UI::menuButton(cx + 10, cy + ch - 25, 90, 21, "save", T("Save"))) {
             Coop::setIdentity(s_charName, s_charShirt);
             s_charEdit = s_charFocus = false;
             Input::setCapture(false);
@@ -311,6 +314,121 @@ float drawCharacterEditor(float x, float y, float w) {
     if (body.valid()) R::spriteAt(*body.sprite, body.frame, {x + w - 26, ly + 20}, R::Pivot::Bottom, 2);
     UI::textWrap(T("Your name is what the other players see in co-op."), x, ly + 28, w - 60, pal(P_BEIGE));
     return 12 + 19 + 40;
+}
+
+// ---- the local co-op lobby (0.12v) ----------------------------------------------------
+// Four places. A controller joins with A or START and leaves with B; the keyboard and
+// mouse join with ENTER and leave with BACKSPACE; left and right pick a shirt. Each
+// place shows its own device's buttons. Player 1 starts, then picks the save.
+// A button's picture from the input prompts; returns its width (0 when missing).
+static float glyph(const char* key, float x, float y) {
+    const Assets::Sprite* s = Assets::find(std::string("input/") + key);
+    if (!s) return 0;
+    R::frame(s->frame(0), std::floor(x), std::floor(y), (float)s->w, (float)s->h);
+    return (float)s->w;
+}
+static void centeredLines(const std::string& text, float cx, float y, float maxW, int col) {
+    for (const std::string& l : wrap(text, maxW)) { R::textCentered(l, cx, y, pal(col), 1, false); y += 10; }
+}
+
+void drawLocalLobby(float W, float H) {
+    float w = std::min(W - 12, 580.0f), h = 240, x = std::floor(W / 2 - w / 2), y = std::floor(H / 2 - h / 2);
+    UI::panel(x, y, w, h, T("LOCAL CO-OP"));
+    centeredLines(T("Up to four players on one screen: controllers, or the keyboard and mouse."), W / 2, y + 18, w - 20, P_BEIGE);
+    float cw = std::floor((w - 20 - 3 * 6) / 4), ch = 156, cy = y + 40;
+    int lastPad = std::max(0, Input::lastPad());
+    {
+        // Which controllers the game can see right now, so a pad that is not coming
+        // through is obvious (0.12v).
+        std::string found;
+        for (int j = 0; j < Input::MAX_PADS; j++)
+            if (Input::padConnected(j)) found += (found.empty() ? "" : ", ") + Input::padName(j);
+        R::textCentered(found.empty() ? T("No controller found - plug one in (USB or Bluetooth)") : T1("Controllers: {0}", found),
+                        W / 2, cy + ch + 4, pal(found.empty() ? P_CORAL : P_LAVENDER), 1, false);
+    }
+    for (int k = 0; k < Local::MAX_SEATS; k++) {
+        const Local::LobbySeat& st = Local::lobbySeat(k);
+        float cx = x + 10 + k * (cw + 6);
+        int col = Coop::colorPal(k);
+        R::rect(cx, cy, cw, ch, pal(P_DARK, st.used ? 0.9f : 0.55f));
+        R::rectOutline(cx, cy, cw, ch, pal(st.used ? col : P_PURPLE));
+        R::textCentered(T1("PLAYER {0}", std::to_string(k + 1)), cx + cw / 2, cy + 4, pal(st.used ? col : P_LAVENDER), 1, false);
+        if (!st.used) {
+            // How to join, in both kinds of buttons.
+            bool pads = false;
+            for (int j = 0; j < Input::MAX_PADS; j++) pads = pads || Input::padConnected(j);
+            float ly = cy + 50;
+            if (pads) {
+                bool ps = Input::padTypeOf(lastPad) == Input::PAD_PLAYSTATION;
+                glyph(ps ? "ps_cross" : "pad_a", cx + cw / 2 - 17, ly);
+                glyph(ps ? "ps_options" : "pad_menu", cx + cw / 2 + 1, ly);
+                centeredLines(T("Controller: press to join"), cx + cw / 2, ly + 19, cw - 8, P_WHITE);
+                ly += 44;
+            }
+            bool kbFree = true;
+            for (int j = 0; j < Local::MAX_SEATS; j++)
+                if (Local::lobbySeat(j).used && Local::lobbySeat(j).device == Input::DEV_KBM) kbFree = false;
+            if (kbFree) {
+                const Assets::Sprite* ek = Assets::find("input/kb_enter");
+                glyph("kb_enter", cx + cw / 2 - (ek ? ek->w / 2.0f : 8), ly);
+                centeredLines(T("Keyboard: press to join"), cx + cw / 2, ly + 19, cw - 8, P_WHITE);
+            }
+            if (!pads && !kbFree) centeredLines(T("Plug in a controller to join"), cx + cw / 2, cy + 70, cw - 8, P_LAVENDER);
+            continue;
+        }
+        // The character, turning slowly, in the chosen shirt.
+        int dirs[4] = {(int)Art::Dir::Down, (int)Art::Dir::Right, (int)Art::Dir::Up, (int)Art::Dir::Left};
+        Art::Dir d = (Art::Dir)dirs[(int)(G.realTime * 0.6f + k) % 4];
+        Art::Piece body = Art::humanBody(d, Art::Anim::Idle, (int)(G.realTime * 6.0f), false, false, st.shirt);
+        if (body.valid()) R::spriteAt(*body.sprite, body.frame, {cx + cw / 2, cy + 64}, R::Pivot::Bottom, 2);
+        const Assets::ShirtDef& sd = Assets::shirt(st.shirt);
+        R::textCentered(k == 0 ? T("Your save") : T(sd.name), cx + cw / 2, cy + 70, pal(k == 0 ? P_BEIGE : sd.uiPal), 1, false);
+        bool kb = st.device == Input::DEV_KBM;
+        std::string dev = kb ? T("Keyboard") : Input::padName(st.device);
+        while (dev.size() > 1 && R::textWidth(dev) > cw - 6) dev.pop_back();
+        R::textCentered(dev, cx + cw / 2, cy + 82, pal(P_LAVENDER), 1, false);
+        // This player's own buttons.
+        float ly = cy + 98;
+        bool ps = !kb && Input::padTypeOf(st.device) == Input::PAD_PLAYSTATION;
+        if (k != 0) {
+            float gw = kb ? glyph("kb_left", cx + 6, ly) : glyph("pad_dpad_lr", cx + 6, ly);
+            if (kb) gw += glyph("kb_right", cx + 6 + gw, ly);
+            R::text(T("Shirt"), cx + 9 + gw, ly + 5, pal(P_WHITE));
+            ly += 19;
+        }
+        float gw = 0;
+        if (kb) { R::text("BKSP", cx + 6, ly + 5, pal(P_YELLOW)); gw = R::textWidth("BKSP"); }
+        else gw = glyph(ps ? "ps_circle" : "pad_b", cx + 6, ly);
+        R::text(T("Leave"), cx + 9 + gw, ly + 5, pal(P_WHITE));
+        ly += 19;
+        if (k == 0) {
+            gw = kb ? glyph("kb_enter", cx + 6, ly) : glyph(ps ? "ps_options" : "pad_menu", cx + 6, ly);
+            R::text(T("Start"), cx + 9 + gw, ly + 5, pal(Local::lobbyReady() ? P_YGREEN : P_PURPLE));
+            if (!Local::lobbyReady()) centeredLines(T("Needs a second player"), cx + cw / 2, ly + 20, cw - 8, P_PURPLE);
+        }
+    }
+    // Mouse buttons (not controller-focusable: a controller's A and B belong to its seat here).
+    auto mouseButton = [&](float bx, float by, float bw, const std::string& label, bool on, int c) {
+        bool hov = on && UI::hover(bx, by, bw, 16);
+        R::rect(bx, by, bw, 16, pal(hov ? P_PURPLE : P_DARK, on ? 0.95f : 0.5f));
+        R::rectOutline(bx, by, bw, 16, pal(on ? c : P_PURPLE));
+        R::textCentered(label, bx + bw / 2, by + 5, pal(on ? c : P_PURPLE), 1, false);
+        if (hov && Input::mousePressed(0)) { Input::consumeMouse(); Audio::play(Snd::click, 0.6f); return true; }
+        return false;
+    };
+    float by = y + h - 24;
+    if (mouseButton(x + 10, by, 90, T("Back"), true, P_WHITE)) { Local::lobbyClose(); G.scene = Scene::Menu; return; }
+    bool kbJoined = false;
+    for (int j = 0; j < Local::MAX_SEATS; j++)
+        if (Local::lobbySeat(j).used && Local::lobbySeat(j).device == Input::DEV_KBM) kbJoined = true;
+    if (!kbJoined && mouseButton(x + w / 2 - 70, by, 140, T("Join with keyboard"), Local::lobbyCount() < Local::MAX_SEATS, P_YELLOW)) {
+        Local::lobbyJoinKeyboard();   // the same as ENTER
+    }
+    if (mouseButton(x + w - 100, by, 90, T("Start"), Local::lobbyReady() && Local::lobbySeat(0).device == Input::DEV_KBM, P_YGREEN)) {
+        Local::lobbyCommit();
+        s_localPick = true;
+        G.scene = Scene::Slots;
+    }
 }
 
 // A new game: how hard, and who is out there. Chosen once, kept by the save.
@@ -361,6 +479,7 @@ void drawNewGameSetup(float W, float H) {
         new_game(s_setupDiff, s_setupMode, s_charName, s_charShirt, s_coopPick && s_setupRivals == 1);
         Coop::setIdentity(s_charName, s_charShirt);   // and who you are when you join a friend
         if (s_coopPick) { s_coopPick = false; Coop::beginHost(); return; }
+        s_localPick = false;
         s_introThenPlay = true;
         G.scene = Scene::Intro;
         return;
@@ -371,15 +490,15 @@ void drawNewGameSetup(float W, float H) {
 void drawSlots(float W, float H) {
     float w = 330, h = 168;
     float x = std::floor(W / 2 - w / 2), y = std::floor(H / 2 - h / 2);
-    UI::panel(x, y, w, h, s_coopPick ? T("HOST CO-OP: PICK A SAVE") : T("SELECT A SLOT"));
+    UI::panel(x, y, w, h, s_coopPick ? T("HOST CO-OP: PICK A SAVE") : s_localPick ? T("LOCAL CO-OP: PICK A SAVE") : T("SELECT A SLOT"));
     const float btnX = x + w - 170, btnW = 96;      // stacked Continue / New Game
     const float delX = x + w - 68, delW = 58;       // Delete, to their right
 
     for (int i = 0; i < SAVE_SLOTS; i++) {
         float ry = y + 20 + i * 38;
         SaveInfo info = save_info(i);
-        R::rect(x + 6, ry, w - 12, 34, pal(i % 2 ? P_DARK : P_PURPLE, i % 2 ? 1.0f : 0.3f));
-        R::rectOutline(x + 6, ry, w - 12, 34, pal(P_PURPLE));
+        R::rect(x + 6, ry, w - 12, 34, pal(P_DARK, i % 2 ? 0.3f : 0.12f));
+        R::rectOutline(x + 6, ry, w - 12, 34, pal(P_DARK, 0.55f));
         R::text(T1("Slot {0}", std::to_string(i + 1)), x + 12, ry + 4, pal(P_YELLOW));
         if (info.exists && (info.difficulty != DIFF_NORMAL || info.gameMode != MODE_NORMAL || info.rivals)) {
             std::string tag;
@@ -397,6 +516,7 @@ void drawSlots(float W, float H) {
             if (UI::button(btnX, ry + 4, btnW, 13, s_coopPick ? T("Host") : T("Continue"))) {
                 if (load_game(i)) {
                     G.scene = Scene::Menu;
+                    s_localPick = false;
                     if (s_coopPick) {
                         // Hosting always starts in the bunker; a raid left open in this
                         // save is simply over (what you carried comes home).
@@ -427,7 +547,11 @@ void drawSlots(float W, float H) {
         }
     }
     if (s_setupSlot >= 0) { drawNewGameSetup(W, H); return; }
-    if (UI::button(x + w / 2 - 40, y + h - 22, 80, 16, T("Back"))) { G.scene = s_coopPick ? Scene::Lobby : Scene::Menu; s_coopPick = false; }
+    if (UI::button(x + w / 2 - 40, y + h - 22, 80, 16, T("Back"))) {
+        G.scene = s_coopPick ? Scene::Lobby : Scene::Menu;
+        if (s_localPick) { Local::cancelPlan(); Local::lobbyOpen(); G.scene = Scene::LocalLobby; }
+        s_coopPick = s_localPick = false;
+    }
 
     if (s_confirmSlot >= 0) {
         float cw = 285, ch = 82;
@@ -436,7 +560,8 @@ void drawSlots(float W, float H) {
         R::text(s_confirmDelete ? T1("Slot {0} will be erased for good.", std::to_string(s_confirmSlot + 1))
                                 : T("This will erase the save in this slot."),
                 cx + 10, cy + 24, pal(P_BEIGE));
-        if (UI::button(cx + 10, cy + ch - 24, 118, 16, s_confirmDelete ? T("Erase") : T("Erase & start"), true, P_CORAL)) {
+        int yn = UI::yesNo(cx + cw - 33, cy + 4);
+        if (UI::button(cx + 10, cy + ch - 24, 118, 16, s_confirmDelete ? T("Erase") : T("Erase & start"), true, P_CORAL) || yn == 1) {
             int slot = s_confirmSlot;
             s_confirmSlot = -1;
             if (s_confirmDelete) {
@@ -448,7 +573,7 @@ void drawSlots(float W, float H) {
             }
             return;
         }
-        if (UI::button(cx + cw - 85, cy + ch - 24, 75, 16, T("Cancel"))) s_confirmSlot = -1;
+        if (UI::button(cx + cw - 85, cy + ch - 24, 75, 16, T("Cancel")) || yn == 2) s_confirmSlot = -1;
     }
 }
 
@@ -472,6 +597,7 @@ void menu_devScreen(const std::string& name) {
     else if (name == "credits") G.scene = Scene::Credits;
     else if (name == "controls") G.scene = Scene::Controls;
     else if (name == "coop") G.scene = Scene::Lobby;
+    else if (name == "local") { Local::lobbyOpen(); Local::lobbyJoinKeyboard(); G.scene = Scene::LocalLobby; }
 }
 
 void menu_init() {
@@ -525,12 +651,35 @@ static void splashDraw(float W, float H) {
 int menu_navContext() { return (s_langPicker ? 1 : 0) + (s_confirmSlot >= 0 ? 2 : 0) + (s_coopPick ? 4 : 0); }
 
 void menu_update(float dt) {
+    // Load (the main menu's Continue): into the save played last.
+    if (s_loadSlot >= 0) {
+        int slot = s_loadSlot;
+        s_loadSlot = -1;
+        if (load_game(slot)) {
+            if (G.prof.inRaid) raid_resume();
+            else base_enter(false);
+            return;
+        }
+    }
     if (G.scene == Scene::Splash) { splashUpdate(dt); return; }
     s_menuClock = std::fmod(s_menuClock + dt * 10.0f, 24 * 60.0f);
     Audio::setAmbient(Audio::AMB_BIRDS, 0.35f);   // the title screen's quiet morning (0.11v)
     G.cam += Vec2(9, 4) * dt;
     float maxX = G.menuWorld.w * TILE - R::width() - 64.0f, maxY = G.menuWorld.h * TILE - R::height() - 64.0f;
     if (G.cam.x > maxX || G.cam.y > maxY) G.cam = Vec2(64, 64);
+    if (G.scene == Scene::LocalLobby) {
+        // The lobby reads every device itself: a controller's B leaves its place rather
+        // than backing out of the screen, so only the keyboard's Escape does that.
+        if (Local::lobbyUpdate()) {
+            Local::lobbyCommit();
+            s_localPick = true;
+            G.scene = Scene::Slots;
+        } else if (Input::keyPressed(GLFW_KEY_ESCAPE)) {
+            Local::lobbyClose();
+            G.scene = Scene::Menu;
+        }
+        return;
+    }
     if (Input::pressed(GLFW_KEY_ESCAPE)) {
         if (s_setupSlot >= 0) s_setupSlot = -1;
         else if (s_confirmSlot >= 0) s_confirmSlot = -1;
@@ -560,18 +709,27 @@ void menu_draw() {
         R::textCentered("OUTBOUND", W / 2 + 2, ty + 2, pal(P_PURPLE), 6, false);
         R::textCentered("OUTBOUND", W / 2, ty, pal(P_YELLOW), 6, false);
 
-        float bw = 140, bh = 18, bx = std::floor(W / 2 - bw / 2), by = std::floor(H * 0.46f);
+        // Two columns of the pack's menu buttons (UI/Menu/Main Menu): the lettered
+        // ones (Play, Settings, Quit) where they say what the button does.
+        float bw = 140, bh = 21, cw = 76, gap = 8, by = std::floor(H * 0.44f);
+        float bx = std::floor(W / 2 - cw - gap / 2), rx = bx + cw + gap;
         if (s_langPicker) {
             drawLanguagePanel(W, H, !L::chosen());
         } else if (G.panel == Panel::None) {
-            if (UI::button(bx, by, bw, bh, T("Play"))) { s_coopPick = false; G.scene = Scene::Slots; }
-            if (UI::button(bx, by + 24, bw, bh, T("Co-op"))) G.scene = Scene::Lobby;
-            if (UI::button(bx, by + 48, bw, bh, T("How to play"))) { s_introThenPlay = false; G.scene = Scene::Intro; }
-            float hw = std::floor((bw - 4) / 2);
-            if (UI::button(bx, by + 72, hw, bh, T("Controls"))) G.scene = Scene::Controls;
-            if (UI::button(bx + bw - hw, by + 72, hw, bh, T("Options"))) G.panel = Panel::Options;
-            if (UI::button(bx, by + 96, bw, bh, T("Credits"))) { G.scene = Scene::Credits; s_creditsScroll = 0; }
-            if (UI::button(bx, by + 120, bw, bh, T("Exit"), true, P_CORAL)) G.quit = true;
+            // Play picks a slot; Load goes straight back into the save you played last.
+            if (UI::menuButton(bx, by, cw, bh, "play", T("Play"))) { s_coopPick = false; G.scene = Scene::Slots; }
+            int last = last_slot();
+            if (UI::menuButton(rx, by, cw, bh, "load", T("Continue"), last >= 0) && last >= 0) s_loadSlot = last;   // next frame
+            if (last >= 0 && UI::hover(rx, by, cw, bh)) UI::tooltip(T("Continue"), T1("Slot {0}", std::to_string(last + 1)));
+            if (UI::button(bx, by + 25, cw, bh, T("Local co-op"))) { Local::lobbyOpen(); G.scene = Scene::LocalLobby; }
+            if (UI::button(rx, by + 25, cw, bh, T("Online co-op"))) { Net::ensureSteam(); G.scene = Scene::Lobby; }
+            if (UI::button(bx, by + 50, cw, bh, T("How to play"))) { s_introThenPlay = false; G.scene = Scene::Intro; }
+            if (UI::button(rx, by + 50, cw, bh, T("Controls"))) G.scene = Scene::Controls;
+            if (UI::menuButton(bx, by + 75, cw, bh, "settings", T("Options"))) G.panel = Panel::Options;
+            if (UI::button(rx, by + 75, cw, bh, T("Credits"))) { G.scene = Scene::Credits; s_creditsScroll = 0; }
+            if (UI::menuButton(std::floor(W / 2 - cw / 2), by + 100, cw, bh, "quit", T("Exit"))) G.quit = true;
+            bx = std::floor(W / 2 - bw / 2);
+            by -= 2;
             {
                 std::string label = T("Check my other game: IncreMiner");
                 float iw = std::floor(R::textWidth(label)) + 20;
@@ -581,7 +739,7 @@ void menu_draw() {
             }
             if (!Coop::leaveReason().empty()) R::textCentered(Coop::leaveReason(), W / 2, by - 14, pal(P_CORAL));
             // Language shortcut, with the active flag next to it.
-            float lx = bx + bw + 12, ly = by;
+            float lx = rx + cw + 12, ly = by + 30;
             drawFlag(L::get(), lx, ly + 3, 18, 12);
             if (UI::button(lx + 22, ly, 60, bh, T("Language"))) s_langPicker = true;
         }
@@ -591,6 +749,8 @@ void menu_draw() {
         drawSlots(W, H);
     } else if (G.scene == Scene::Lobby) {
         drawLobby(W, H);
+    } else if (G.scene == Scene::LocalLobby) {
+        drawLocalLobby(W, H);
     } else if (G.scene == Scene::Intro) {
         drawIntro(W, H);
     } else if (G.scene == Scene::Controls) {
@@ -598,7 +758,6 @@ void menu_draw() {
     } else if (G.scene == Scene::Credits) {
         float w = std::min(W - 40, 420.0f), h = H - 40;
         float x = std::floor(W / 2 - w / 2), y = 20;
-        UI::panel(x, y, w, h, T("CREDITS"));
         // A credit written "Name: https://..." becomes a button that opens the page.
         struct Line { std::string text; int col; std::string url; };
         std::vector<Line> lines;
@@ -636,6 +795,7 @@ void menu_draw() {
         float viewH = h - 50;
         float maxScroll = std::max(0.0f, total - viewH);
         s_creditsScroll = std::min(s_creditsScroll, maxScroll);
+        UI::panelScroll(x, y, w, h, T("CREDITS"), maxScroll > 0 ? s_creditsScroll / maxScroll : 0);
         float ly = y + 22 - s_creditsScroll;
         for (size_t i = 0; i < lines.size(); i++) {
             const Line& l = lines[i];
@@ -659,7 +819,7 @@ void menu_draw() {
         if (UI::button(x + w / 2 - 40, y + h - 24, 80, 16, T("Back"))) G.scene = Scene::Menu;
     }
     // With a controller, say which buttons do what in here.
-    if (Input::usingPad()) {
+    if (Input::usingPad() && G.scene != Scene::LocalLobby) {
         const Prompt::Hint hints[] = {{Prompt::Select, T("Select")}, {Prompt::Back, T("Back")}};
         Prompt::row(hints, 2, W - 6 - Prompt::rowWidth(hints, 2), H - 20, pal(P_LAVENDER));
     }

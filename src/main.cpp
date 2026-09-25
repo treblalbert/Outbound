@@ -11,6 +11,7 @@
 #include "gl.h"
 #include "input.h"
 #include "lang.h"
+#include "local.h"
 #include "render.h"
 #include "sprites.h"
 #include "ui.h"
@@ -26,6 +27,9 @@
 #include <emscripten.h>
 #include <emscripten/html5.h>
 #endif
+
+static void devBarricades(int argc, char** argv);
+void raid_devExtract();
 
 std::string g_dataDir;
 std::string g_saveDir;
@@ -109,6 +113,10 @@ static void loadCredits() {
 //   --bleed              with --raid, start out bleeding
 //   --tutstep=N          with --base, open the bunker tour at step N
 //   --window=WxH         open the window at that size (e.g. 1920x1080 for store shots)
+//   --seed=N             with --raid, a fixed world seed (the same world every run)
+//   --at=X,Y             with --raid, start standing on that tile
+//   --barricades         with --raid or --defense, a ring of walls and gates round the bunker
+//   --local=N            with --raid, N local co-op players (extras on controller slots)
 struct DevShot { std::string path; float at; bool done; };
 static std::vector<DevShot> g_devShots;
 // --record=FILE.mp4@START@SECONDS (trailer capture): the game steps at exactly 1/30 s a
@@ -126,6 +134,7 @@ static bool g_devNoGrain = false;   // --nograin
 static int g_devMoney = -1;         // --money=N: start with that much (trailer shots)
 static int g_devCoopCrypt = 0;      // --coop-crypt=1|2|3: once out, go to the catacomb gate (see raid_devCrypt)
 static bool g_devBot = false;       // --bot
+static float g_devExtractAt = -1;   // --extract=SECONDS: go home through the hatch then
 static bool g_devBotFar = false;    // --bot-far: walk off in a straight line instead
 static float g_devStashOpen = -1;   // --stash-open=SECONDS: open the stash panel then
 static float g_devStashPut = -1;    // --stash-put=SECONDS: put everything carried in the shared stash, then close it
@@ -201,6 +210,7 @@ static void applyDevArgs(int argc, char** argv) {
         if (a.rfind("--go-out=", 0) == 0) g_devGoOut = (float)std::atof(a.c_str() + 9);
         if (a.rfind("--coop-crypt=", 0) == 0) g_devCoopCrypt = std::atoi(a.c_str() + 13);
         if (a == "--bot") g_devBot = true;
+        if (a.rfind("--extract=", 0) == 0) g_devExtractAt = (float)std::atof(a.c_str() + 10);
         if (a == "--bot-far") g_devBot = g_devBotFar = true;
         if (a.rfind("--stash-open=", 0) == 0) g_devStashOpen = (float)std::atof(a.c_str() + 13);
         if (a.rfind("--stash-put=", 0) == 0) g_devStashPut = (float)std::atof(a.c_str() + 12);
@@ -268,6 +278,7 @@ static void applyDevArgs(int argc, char** argv) {
         G.devNoSave = true;
         new_game();
         G.prof.money = 20000;
+        devBarricades(argc, argv);
         defense_enter();
         return;
     }
@@ -309,9 +320,12 @@ static void applyDevArgs(int argc, char** argv) {
     }
     if (!raid) return;
     new_game();
+    for (int i = 1; i < argc; i++)   // --seed=N: the same world every run (world generation work)
+        if (std::string(argv[i]).rfind("--seed=", 0) == 0) G.prof.worldSeed = std::strtoull(argv[i] + 7, nullptr, 10);
     if (missionActive) { G.prof.mission.day = G.prof.day; G.prof.mission.type = 1; G.prof.mission.target = 5; G.prof.mission.reward = 180; }
     if (timeOverride >= 0) G.prof.timeMin = timeOverride;
     addToSlots(G.prof.inv, makeItem(IT_GRENADE, 3));
+    devBarricades(argc, argv);
     if (squad) {
         for (int t : {1, 3}) {
             Hireling h;
@@ -411,8 +425,28 @@ static void applyDevArgs(int argc, char** argv) {
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
         if (a == "--locator") G.prof.locatorDay = G.prof.day;
+        // --searching: open the nearest unsearched container, still being searched.
+        if (a == "--searching") {
+            int best = -1;
+            float bd = 1e9f;
+            for (size_t k = 0; k < G.world.containers.size(); k++) {
+                const Container& c = G.world.containers[k];
+                float d = dist(c.pos, G.player.pos);
+                if (!c.searched && !c.removed && c.searchTime > 30 * 0 + 0.5f && d < bd) { bd = d; best = (int)k; }
+            }
+            if (best >= 0) { G.world.containers[best].searchTime = 9999; G.lootContainer = best; G.searchT = 3000; G.panel = Panel::Loot; }
+        }
         if (a == "--atpuddle") { G.player.pos = Atmo::nearestPuddle(G.world, G.player.pos) + Vec2(0, -4); G.cam = G.player.pos - Vec2(R::viewW() / 2.0f, R::viewH() / 2.0f); }
         if (a == "--bloodpool") { void raid_devPool(); raid_devPool(); }
+        if (a.rfind("--at=", 0) == 0) {   // --at=X,Y: stand on that tile (world generation work)
+            int tx = 0, ty = 0;
+            if (std::sscanf(a.c_str() + 5, "%d,%d", &tx, &ty) == 2) {
+                G.player.pos = World::tileCenter(tx, ty);
+                G.cam = G.player.pos - Vec2(R::viewW() / 2.0f, R::viewH() / 2.0f);
+                G.world.reveal(G.player.pos, 20);
+            }
+        }
+        if (a.rfind("--local=", 0) == 0) Local::devSeats(std::atoi(a.c_str() + 8));   // --local=N: local co-op test
         if (a == "--athatch") { G.player.pos = G.world.homePos + Vec2(0, 24); G.cam = G.player.pos - Vec2(R::viewW() / 2.0f, R::viewH() / 2.0f); }
         if (a == "--atcompound") { G.player.pos = G.world.homePos + Vec2(0, 76); G.cam = G.player.pos - Vec2(R::viewW() / 2.0f, R::viewH() / 2.0f); }
         // 0.11v: --driving, --atcity, --atfloor, --atgarage, --panel=mechanic.
@@ -445,6 +479,25 @@ static void applyDevArgs(int argc, char** argv) {
         G.saveSlot = devSlot - 1;
         raid_saveState();
     }
+}
+
+// --barricades: a ring of walls round the bunker with gates across the way out, to
+// look at and to throw a horde against.
+static void devBarricades(int argc, char** argv) {
+    bool on = false;
+    for (int i = 1; i < argc; i++) on = on || std::string(argv[i]) == "--barricades";
+    if (!on) return;
+    G.prof.barricades.clear();
+    const int R = 5;
+    for (int dy = -R; dy <= R; dy++)
+        for (int dx = -R; dx <= R; dx++) {
+            if (std::abs(dx) != R && std::abs(dy) != R) continue;
+            Barricade b;
+            b.dx = dx; b.dy = dy;
+            bool lane = dy == R && std::abs(dx) <= 1, side = dx == -R && std::abs(dy) <= 0;
+            b.type = lane ? BT_WOOD_GATE : side ? BT_REINF_GATE : dy == -R ? BT_REINF_WALL : BT_WOOD_WALL;
+            G.prof.barricades.push_back(b);
+        }
 }
 
 // One frame of the game. The desktop build spins this in a while loop; the browser
@@ -488,6 +541,10 @@ void frame() {
     Net::update();
     Coop::update(dt);
     Voice::update(dt);
+    // Local co-op (0.12v): players dropping in and out, and the lobby's players joining
+    // once the game it started has loaded.
+    if (Local::planPending()) Local::applyPlan();
+    Local::update(dt);
 
     // A controller drives menus and panels by jumping between their widgets (see
     // UI::padNavigate); gameplay keeps the sticks for moving and aiming.
@@ -505,6 +562,7 @@ void frame() {
     case Scene::Slots:
     case Scene::Lobby:
     case Scene::Splash:
+    case Scene::LocalLobby:
         menu_update(dt);
         if (G.scene == Scene::Base) base_draw();
         else menu_draw();
@@ -557,6 +615,10 @@ void frame() {
             }
         }
     }
+    if (g_devExtractAt >= 0 && G.scene == Scene::Raid && G.realTime >= g_devExtractAt) {
+        g_devExtractAt = -1;
+        raid_devExtract();
+    }
     if (g_devZombiesAt >= 0 && G.scene == Scene::Raid && G.realTime >= g_devZombiesAt) {
         g_devZombiesAt = -1;
         raid_devZombies(g_devZombieCount);
@@ -571,8 +633,12 @@ void frame() {
     }
 #endif
     UI::padNavigate((int)G.scene * 64 + (int)G.panel + 4096 * menu_navContext());
+    // The pack's pointer (UI/Menu/Cursor) stands in for the system's, drawn by the UI
+    // next frame; out in the world the crosshair does, and in local co-op every
+    // player's own pointer.
     bool hideCursor = G.scene == Scene::Raid && G.panel == Panel::None;
-    glfwSetInputMode(window, GLFW_CURSOR, hideCursor ? GLFW_CURSOR_HIDDEN : GLFW_CURSOR_NORMAL);
+    UI::setCursor(!hideCursor && !Local::active() && glfwGetWindowAttrib(window, GLFW_HOVERED));
+    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
 
     R::present(G.lighting, G.drawCam, fbw, fbh);
 #ifndef __EMSCRIPTEN__

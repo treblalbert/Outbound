@@ -170,6 +170,131 @@ OUTBOUND - DEVLOG (0.11v)
 
 
 
+·A WORLD THAT LOOKS LIVED IN (AND LEFT)
+
+- The cities have real streets now: sidewalks two tiles wide with a kerb along the road, zebra crossings at the junctions, stop signs on the corners, street lights along one side of every street, manholes, and litter in the gutters.
+- Every block is something: offices and shops with lawns, wild yards or paved backyards round them, car parks with their bays painted and the wrecks still in them, parks crossed by paths with benches, lamps, trees and flower beds, fenced depots full of shipping containers, and the ruins of whatever used to stand there.
+- The sidewalks are furnished: benches with a bin beside them, fire hydrants, vending machines, shopping carts, traffic cones.
+- City buildings have flat concrete roofs with air conditioners, vents, ducts, antennas and the odd hole on top, a row of windows along the front, posters and graffiti, and a striped awning over the shops' doors.
+- Some cities are kept, some are half taken back by the grass: it grows up through the cracks, creeps over the edges of the paving, and has overgrown the benches, the signs and the cars.
+- A ragged belt of dead grey scrub runs round every city, so the country does not stop dead at the first kerb, and there are patches of it out in the country too.
+- The woods grow in stands of one colour now, instead of every tree a different one: darker woods, lighter ones, a dying tree here and there, and whole copses turned orange, yellow and red for autumn.
+- Meadows are full of flowers, the grass grows in clumps, and there are mushrooms and fallen sticks under the trees, stones on the bare earth, fallen trunks, stumps and boulders in the woods.
+- Towns have bins, tyres, benches and heaps of rubbish round the houses; farms have a tractor in the yard and their fields planted in rows; warehouses stand on a paved yard with containers, pallets and drums; army camps have their containers too.
+- Cars left out in the country are overgrown with whatever grows there.
+- Rain leaves puddles on the city's paving as well.
+
+
+
+·THE HUD
+
+- Health is shown with the art pack's heart and bar, and the magazine as a row of bullets under the gun's name, spent ones greyed out (in a big magazine each bullet stands for a few rounds). The two gun slots are framed like inventory cells.
+
+
+
+·FIXES
+
+- A stack of 9mm rounds over 60 (easy to reach in the stash) turned into the .338 icon. Big stacks used to swap to the pack's ammo crates, but the blue crate is already the .338 icon (and the red one the rocket's). Every kind of round keeps its own icon now.
+
+
+
+·THE MELEE SLOT, AND STEAM LETTING GO OF THE CONTROLLER
+
+- The inventory has a MELEE slot beside the two guns. The bat (and any melee weapon to come) goes there like a gun goes in its slot, and only a weapon in that slot is swung; without one you punch. It is kept, saved and can be lost on death like the rest of your gear. The auto-equip box covers it too.
+- Melee now breaks things, hit by hit, the way bullets do: fences, wooden and brick walls, doors, crates, hedges and trees. Clear a wall or cut a path through the woods with the bat; fists can do it too, slowly. Your own barricades and the bunker are left alone. In co-op a guest's blows go to the host, who owns the ground.
+- Fixed: an Xbox controller did nothing while Steam was running. The game told Steam at startup that it was running (as app 480, Valve's Spacewar, until it has its own), and Steam then took the controller over for its own input system. Steam now starts only when you open Online co-op (or join from a Steam invite), so everything else sees the controller as a plain controller.
+- Every joystick Windows reports is written to saves/input_log.txt (name, id, whether it is mapped and whether the game uses it), for when a controller still does not show up.
+
+
+
+·CONTROLLERS, MICROPHONES, BUTTONS
+
+- Controllers that did nothing now work. The game ships the SDL community's controller database (assets/gamecontrollerdb.txt), so PlayStation pads, third-party pads and the rest are recognised, not just the handful GLFW knows. A pad in no database at all is still read directly, with the usual layouts.
+- The local co-op lobby lists the controllers it can see, or says plainly that it sees none.
+- Options: pick your microphone from a list of every input device. The list updates as you plug things in and out. It defaults to the system's default input (on Windows, the one set as default in the sound settings) and follows it if you change that. A chosen device that is unplugged falls back to the default until it is back.
+- Inventory: an "Auto-equip guns" box. Untick it and guns you loot go in your pockets rather than straight into an empty gun slot.
+- Every button uses plain text on the same blank button, including the main menu's (no lettered ones), so they all match and translate.
+
+
+
+·MORE OF THE PACK IN THE WORLD
+
+- Kept city parks are often railed in wrought iron (the pack's iron fence), open where the paths run out.
+- Container depots have wire gates in the side you drive in by. Gates now work anywhere on the map, not just at the bunker.
+- Doors have styles: metal on warehouses and army huts, the plain beige ones on some town and city fronts, wood on houses, and white doors inside. A door that has taken a beating shows shot through, and open doors show their open leaf.
+- Rooms get a TV, a table lamp or a standing mirror against the back wall now and then, and a painting (a sunset, or hills) hung on it.
+- City roofs can have a balcony over the street, some with a fire ladder down the front. Country houses may have a storm cellar in the yard, its grass the grass it stands in. Some front walls have a boarded-up door.
+- Where a building's wall has been blown out you see the broken stump of the wall.
+- Moss grows in the cracks of city paving and roads, more the wilder the city; on dark asphalt it is the lighter-rimmed kind so it still shows.
+- Grass tufts are trodden flat under whoever stands in them.
+- Fixed: a lone tile of lawn on bare ground showed as a flat green square.
+- Vans and buses now also come in the pack's light green, and rusted wrecks in dark blue.
+- The HUD's heart empties as your health does. Co-op teammates' health shows as hearts in the team list, and your own as hearts on the inventory and in the bunker's top bar.
+- A pistol or shotgun magazine shows round by round with the pack's big bullet indicators when it fits.
+- Something dropped on its own lies on the ground as itself: a box of rounds, a bandage, a tin of food or soup, a pistol, a shotgun, a rifle, a bat.
+- Continue on the main menu (the pack's Load button) goes straight back into the save you played last.
+- The trader's stock and the credits scroll with the pack's scroll bar; the mechanic lists a car's parts as a crafting line.
+
+
+
+·HANDS, BATS AND AXES
+
+- Melee: F (tap R3 on a controller) punches whatever is right in front of you, with the pack's punch animation. Carry a Baseball Bat anywhere in your pockets and you swing that instead: more damage, more reach, a harder knock-back. The trader sells bats for $90, and they turn up in the world. Holding R3 still toggles the laser.
+- Mercenaries punch a zombie off when it gets right on top of them, then go back to shooting.
+- The axe zombie throws its axe at anyone 50 to 125 pixels away. It spins through the air, hurts whoever it lands on and sticks in the ground. The zombie fights bare-handed, hitting for less, until it walks over and picks the axe back up.
+- The dead use all of the pack's animations: a second attack swing, swaying on their idle when they stand still, and both deaths (a stagger and fall, and the bloody one).
+- People fall three different ways, and a helmet rolls off the ones who wore one.
+- Guns kick with their shoot animation, and the shotgun pumps after every shot.
+- Spent casings fly out of the side of every gun, bounce, and lie on the ground for a while: small ones for pistols and SMGs, long ones for rifles, red shells from a shotgun.
+- You bend down (the pick-up animation) to search a container and to take everything.
+- Canned Soup is a new trade good.
+
+
+
+·THE PACK'S OWN INTERFACE
+
+- Every panel, button, item cell, slider and tooltip is now drawn with the art pack's UI sheets instead of flat boxes: the inventory frame for panels, the beige menu button (pressed in while you point at it), the inventory cell and its "chosen" frame, the menu scroll bar for sliders.
+- The main menu uses the pack's lettered buttons (Play, Settings, Quit) in English, laid out in two columns.
+- The pack's mouse pointer replaces the system one in menus.
+- Closable panels have the inventory's X in their corner. Confirmations (abandon the raid, head outside, erase a save) have the green tick and red cross.
+- Check boxes draw their tick in with the pack's animation. Voice chat on/off is one, and a new "Co-op zoom" box lets you turn off the shared camera zooming out in local co-op.
+- The crafter shows each upgrade as a crafting line from the pack: the gun it becomes, from the gun and the parts it takes. The gun list sits on the crafting sheet, its scroll box showing the page.
+
+·WALLS AND GATES
+
+- The defense console has a Walls tab: wooden walls ($40) and gates ($70), and reinforced ones ($120, $180) once you have repelled a horde. Hold and drag to build a line.
+- They use the pack's buildable wood: straight runs, the four corners and the T where they meet, and gates that swing open with the pack's animation.
+- Gates open for you, your mercenaries and your friends, and close behind you, never on anyone standing in them. A gate can stand across the way out of the compound; a wall cannot.
+- The horde bashes through a wall when that is quicker than walking round it. Reinforced walls take a long time to break. Armor Plating research thickens them too. Repair or sell them from the same tab.
+- The compound's back fence has wire gates now, the middle one locked, that open and close with the pack's animation. The dead can tear them down.
+
+·RAIN AND WATER
+
+- Puddles on grass take the colour of the grass round them, using the pack's green, dark green and bleak yellow versions of every puddle.
+- Rain falls as the pack's own drops, long streaks and short ones, blue and white.
+- The dead and your mercenaries splash as they walk through puddles too, a smaller splash than yours.
+- Buildings have downspouts down their front corners, grey or rusty. The bent ones pour rainwater onto the ground while it rains.
+
+
+
+·LOCAL CO-OP
+
+- Up to four players on one screen, each on a controller (Xbox or PlayStation) or the keyboard and mouse. Local co-op on the main menu opens a lobby: press A / Cross or START to take a place, B / Circle to leave it, left and right to pick a shirt; the keyboard joins with ENTER. Each place shows its own buttons. Player 1 starts, then picks the save.
+- Out in the world: one camera that follows the whole group and pulls back to keep everyone on screen, a card for each player along the bottom (health, stamina, gun and magazine, grenades and medicine), each player's prompts in their own buttons, and their own pointer in their colour. Controllers aim with the right stick, with a little aim assist.
+- One player works a menu at a time; the others keep playing. A free controller can still drop in during the game with START, and anyone can drop out from their pause menu.
+- The group sticks together: the stairs, the catacombs and the hatch take everyone. A player who bleeds out waits in the bunker for the others; if everyone goes down, the day is over for all of you.
+
+
+
+·A HARDER START, A REAL CLIMB
+
+- The dead are tougher: twice the health they had, and a fifth faster. The small quick ones now outrun even a sprint; the big ones and the axe ones you can still get away from.
+- Good guns have to be earned over the days. On day 1 no gun is better than rare, and rare ones are scarce (about one gun in sixteen). Epic guns start turning up on day 3 and reach their full odds around day 8. Elite guns start on day 4.
+- Walking far on the first day no longer finds end-game loot: how good a place's loot can be grows with the days (and the catacombs, which open on day 3, stay the richest).
+- The same goes for the guns raiders drop, and for Zombies mode.
+
+
+
 ·FIXES
 
 - "Sell all valuables" at the trader only sells what is in your pockets now. It used to empty the valuables out of your stash too, so nothing could be saved for later.

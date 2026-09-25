@@ -128,6 +128,13 @@ void writeWorld(Net::Writer& w) {
         w.u8((uint8_t)t.level);
         w.f32(t.hp);
     }
+    w.u8((uint8_t)p.barricades.size());
+    for (const Barricade& b : p.barricades) {
+        w.i16((int16_t)b.dx);
+        w.i16((int16_t)b.dy);
+        w.u8((uint8_t)b.type);
+        w.f32(b.hp);
+    }
 }
 
 void readWorld(Net::Reader& r) {
@@ -160,6 +167,16 @@ void readWorld(Net::Reader& r) {
         t.hp = r.f32();
         turrets.push_back(t);
     }
+    std::vector<Barricade> barricades;
+    int nb = r.u8();
+    for (int i = 0; i < nb; i++) {
+        Barricade b;
+        b.dx = r.i16();
+        b.dy = r.i16();
+        b.type = std::clamp((int)r.u8(), 0, BT_COUNT - 1);
+        b.hp = r.f32();
+        barricades.push_back(b);
+    }
     if (r.bad) return;
     bool newWorld = day != p.day || rev != p.dayRev || seed != p.worldSeed;
     p.day = day;
@@ -188,6 +205,15 @@ void readWorld(Net::Reader& r) {
     } else {
         p.turrets = turrets;
     }
+    // Barricades: put the host's list into the world when it changed.
+    bool barrChanged = barricades.size() != p.barricades.size();
+    for (size_t i = 0; !barrChanged && i < barricades.size(); i++) {
+        const Barricade &a = barricades[i], &b = p.barricades[i];
+        barrChanged = a.dx != b.dx || a.dy != b.dy || a.type != b.type || (a.hp > 0) != (b.hp > 0);
+    }
+    for (size_t i = 0; i < barricades.size() && i < p.barricades.size(); i++) barricades[i].hurtT = p.barricades[i].hurtT;
+    p.barricades = barricades;
+    if (barrChanged && !newWorld && G.world.w > 0) placeTurretsInWorld(G.world);
     raid_setHordeState(hActive, hN, hLeft, night);
     if (newWorld && G.scene == Scene::Raid) raid_forceHome();
 }

@@ -38,6 +38,23 @@ static const UpgradeDef DEF_UPGRADES[DU_COUNT] = {
     {"Bounty Contracts", "+15% money per zombie", 5, 650},
 };
 
+// Barricades (0.12v). Armor Plating research thickens them as it does the turrets.
+static const BarricadeDef BARRICADES[BT_COUNT] = {
+    //  name                 desc                                                    icon                                   cost  hp   gate   reinf  hordes
+    {"Wooden wall",       "Planks nailed to posts. Holds the dead up for a while.",      "icon_wooden-wall",                    40,  240, false, false, 0},
+    {"Wooden gate",       "A wall that swings open for you and your people.",            "icon_wooden-wall_gate",               70,  200, true,  false, 0},
+    {"Reinforced wall",   "Braced and banded. Takes a horde a long time to chew through.", "icon_reinforced-wooden-wall",       120, 700, false, true,  1},
+    {"Reinforced gate",   "A reinforced wall that still opens for you.",                 "icon_reinforced-wooden-wall_gate",    180, 560, true,  true,  1},
+};
+
+const BarricadeDef& barricadeDef(int type) { return BARRICADES[std::clamp(type, 0, BT_COUNT - 1)]; }
+float barricadeMaxHp(const Barricade& b) { return barricadeDef(b.type).hp * (1.0f + 0.20f * G.prof.defUp[DU_PLATING]); }
+int barricadeRepairCost(const Barricade& b) {
+    float mx = barricadeMaxHp(b), missing = mx - std::max(0.0f, b.hp);
+    if (missing <= 0.5f) return 0;
+    return std::max(5, (int)(missing / mx * barricadeDef(b.type).cost * 0.5f / 5.0f) * 5);
+}
+
 const UpgradeDef& defenseUpgradeDef(int id) { return DEF_UPGRADES[std::clamp(id, 0, DU_COUNT - 1)]; }
 
 int defenseUpgradeCost(int id, int level) {
@@ -167,6 +184,27 @@ uint64_t todaySeed() {
 
 void placeTurretsInWorld(World& w) {
     if (G.prof.rivals) return;       // no shared compound to defend in Rivals
+    // Barricades: clear the old ones (sold, broken), then stand up the list.
+    for (int dy = -BUILD_RADIUS; dy <= BUILD_RADIUS; dy++)
+        for (int dx = -BUILD_RADIUS; dx <= BUILD_RADIUS; dx++) {
+            int x = w.homeTx + dx, y = w.homeTy + dy;
+            if (!w.inBounds(x, y)) continue;
+            int s = w.at(x, y).solid;
+            if (s == S_BARRICADE || s == S_GATE || s == S_GATE_OPEN) { w.at(x, y).solid = S_NONE; w.updateMapPixel(x, y); }
+        }
+    for (Barricade& b : G.prof.barricades) {
+        if (b.hp < 0) b.hp = barricadeMaxHp(b);
+        int x = w.homeTx + b.dx, y = w.homeTy + b.dy;
+        if (!w.inBounds(x, y) || b.hp <= 0) continue;
+        Tile& tile = w.at(x, y);
+        tile.worldDeco = 0;
+        tile.deco = 0;
+        tile.container = -1;
+        tile.solid = barricadeDef(b.type).gate ? S_GATE : S_BARRICADE;
+        tile.variant = (uint8_t)b.type;
+        tile.hp = -1;
+        w.updateMapPixel(x, y);
+    }
     for (const Turret& t : G.prof.turrets) {
         int x = w.homeTx + t.dx, y = w.homeTy + t.dy;
         if (!w.inBounds(x, y)) continue;
@@ -220,6 +258,9 @@ namespace {
 int s_tab = 0;             // 0 build, 1 research
 int s_buildType = -1;      // turret type being placed, -1 = none
 int s_selected = -1;       // index into prof.turrets
+int s_barrType = -1;       // barricade type being placed (0.12v)
+int s_barrSel = -1;        // index into prof.barricades
+int s_dragDx = 99, s_dragDy = 99;   // the last tile a held click built on
 
 bool buildableOffset(int dx, int dy) {
     if (std::abs(dx) > BUILD_RADIUS || std::abs(dy) > BUILD_RADIUS) return false;
@@ -235,8 +276,21 @@ int turretAt(int dx, int dy) {
     return -1;
 }
 
+int barricadeAt(int dx, int dy) {
+    const auto& bs = G.prof.barricades;
+    for (int i = 0; i < (int)bs.size(); i++)
+        if (bs[i].dx == dx && bs[i].dy == dy) return i;
+    return -1;
+}
+
+// A gate may also stand across your way out; walls may not.
+bool barricadeOffset(int type, int dx, int dy) {
+    if (buildableOffset(dx, dy)) return true;
+    return barricadeDef(type).gate && std::abs(dx) <= 1 && dy >= 4 && dy <= BUILD_RADIUS;
+}
+
 bool canBuildAt(int dx, int dy) {
-    if (!buildableOffset(dx, dy) || turretAt(dx, dy) >= 0) return false;
+    if (!buildableOffset(dx, dy) || turretAt(dx, dy) >= 0 || barricadeAt(dx, dy) >= 0) return false;
     const World& w = G.world;
     int x = w.homeTx + dx, y = w.homeTy + dy;
     if (!w.inBounds(x, y)) return false;
@@ -257,10 +311,20 @@ Vec2 viewCam() {
 
 std::string money(int v) { return "$" + std::to_string(v); }
 
+bool canBarricadeAt(int type, int dx, int dy) {
+    if (!barricadeOffset(type, dx, dy) || turretAt(dx, dy) >= 0 || barricadeAt(dx, dy) >= 0) return false;
+    const World& w = G.world;
+    int x = w.homeTx + dx, y = w.homeTy + dy;
+    if (!w.inBounds(x, y)) return false;
+    int s = w.at(x, y).solid;
+    return s == S_NONE || s == S_BUSH || s == S_ROCK;
+}
+
+void clearPicks() { s_buildType = s_selected = s_barrType = s_barrSel = -1; }
+
 void leave() {
     save_game();
-    s_buildType = -1;
-    s_selected = -1;
+    clearPicks();
     base_enter(false);
 }
 
@@ -334,6 +398,34 @@ bool defense_apply(int op, int a, int b, int c) {
     case DO_REPAIR_BASE:
         p.baseHp = baseMaxHp();
         return true;
+    case DO_BARR_BUILD: {
+        if (a < 0 || a >= BT_COUNT || (int)p.barricades.size() >= MAX_BARRICADES || !canBarricadeAt(a, b, c)) return false;
+        Barricade br;
+        br.dx = b; br.dy = c; br.type = a;
+        br.hp = barricadeMaxHp(br);
+        p.barricades.push_back(br);
+        placeTurretsInWorld(w);
+        return true;
+    }
+    case DO_BARR_SELL: {
+        int i = barricadeAt(b, c);
+        if (i < 0) return false;
+        p.barricades.erase(p.barricades.begin() + i);
+        if (s_barrSel >= (int)p.barricades.size()) s_barrSel = -1;
+        placeTurretsInWorld(w);
+        return true;
+    }
+    case DO_BARR_REPAIR: {
+        int i = barricadeAt(b, c);
+        if (i < 0) return false;
+        p.barricades[i].hp = barricadeMaxHp(p.barricades[i]);
+        placeTurretsInWorld(w);
+        return true;
+    }
+    case DO_BARR_REPAIR_ALL:
+        for (Barricade& br : p.barricades) br.hp = barricadeMaxHp(br);
+        placeTurretsInWorld(w);
+        return true;
     }
     return false;
 }
@@ -370,8 +462,7 @@ void defense_enter() {
     G.panel = Panel::None;
     G.cam = viewCam();
     Atmo::reset();
-    s_buildType = -1;
-    s_selected = -1;
+    clearPicks();
     // Keep turrets pointing somewhere sensible while nothing is attacking.
     for (Turret& t : G.prof.turrets) t.angle = angleOf(Vec2((float)t.dx, (float)t.dy));
 }
@@ -385,9 +476,9 @@ void defense_update(float dt) {
         Audio::setAmbient(Audio::AMB_WIND, (1.0f - day) * 0.5f);
     }
     base_hardcoreClock(dt);
-    if (base_hordeCall(dt)) { s_buildType = -1; s_selected = -1; return; }
+    if (base_hordeCall(dt)) { clearPicks(); return; }
     if (Input::pressed(GLFW_KEY_ESCAPE)) {
-        if (s_buildType >= 0 || s_selected >= 0) { s_buildType = -1; s_selected = -1; }
+        if (s_buildType >= 0 || s_selected >= 0 || s_barrType >= 0 || s_barrSel >= 0) clearPicks();
         else { leave(); return; }
     }
     // Co-op: others build and sell too; keep the compound's tiles matching the list.
@@ -430,8 +521,8 @@ static void panelBuild(float x, float y, float w) {
                 UI::tooltip(T(d.name), T(d.desc) + buf);
             }
             if (UI::button(x + w - 54, ry + 7, 50, 14, sel ? T("Cancel") : T("Place"), true)) {
+                clearPicks();
                 s_buildType = sel ? -1 : i;
-                s_selected = -1;
             }
         } else if (p.hordesRepelled < d.unlockWave) {
             R::text(T1("Repel {0} hordes", std::to_string(d.unlockWave)), x + 11, ry + 14, pal(P_CORAL));
@@ -453,6 +544,71 @@ static void panelBuild(float x, float y, float w) {
     for (const Turret& t : p.turrets) repairAll += turretRepairCost(t);
     if (repairAll > 0 && UI::button(x, by + 12, w, 14, T1("Repair all turrets {0}", money(repairAll)), p.money >= repairAll, P_YGREEN)) {
         if (doOp(DO_REPAIR_ALL, repairAll)) Audio::play(Snd::sell, 0.6f, 0.8f);
+    }
+}
+
+// Walls and gates (0.12v): the pack's buildable wood, bought per tile.
+static void panelWalls(float x, float y, float w) {
+    Profile& p = G.prof;
+    for (int i = 0; i < BT_COUNT; i++) {
+        const BarricadeDef& d = barricadeDef(i);
+        float ry = y + i * 30;
+        bool sel = s_barrType == i;
+        R::rect(x, ry, w, 28, pal(sel ? P_LAVENDER : P_DARK, sel ? 0.45f : (i % 2 ? 0.35f : 0.15f)));
+        if (!UI::skinSprite("crafting/crafting-cell", x + 2, ry + 3)) R::rectOutline(x + 2, ry + 3, 21, 22, pal(P_PURPLE));
+        if (const Assets::Sprite* ic = Assets::find(std::string("ui/inventory/objects/") + d.icon)) {
+            const Assets::Frame& f = ic->frame(0);
+            R::frame(f, std::floor(x + 2 + (21 - f.w) / 2.0f), std::floor(ry + 3 + (21 - f.h) / 2.0f), (float)f.w, (float)f.h);
+        }
+        R::text(T(d.name), x + 27, ry + 3, pal(P_WHITE));
+        bool open = p.hordesRepelled >= d.unlockHordes;
+        if (open) {
+            R::text(money(d.cost) + "  HP " + std::to_string((int)(d.hp * (1.0f + 0.20f * p.defUp[DU_PLATING]))), x + 27, ry + 14,
+                    pal(p.money >= d.cost ? P_YGREEN : P_CORAL));
+            if (UI::hover(x, ry, w - 58, 28)) UI::tooltip(T(d.name), T(d.desc) + "\n" + T("Hold the button and drag to build a line."));
+            if (UI::button(x + w - 54, ry + 7, 50, 14, sel ? T("Cancel") : T("Place"), true)) {
+                clearPicks();
+                s_barrType = sel ? -1 : i;
+            }
+        } else {
+            R::text(T1("Repel {0} hordes", std::to_string(d.unlockHordes)), x + 27, ry + 14, pal(P_CORAL));
+            if (UI::hover(x, ry, w, 28)) UI::tooltip(T(d.name), T(d.desc));
+        }
+    }
+    float by = y + BT_COUNT * 30 + 4;
+    R::text(T2("Barricades {0}/{1}", std::to_string(p.barricades.size()), std::to_string(MAX_BARRICADES)), x + 2, by, pal(P_LAVENDER));
+    int repairAll = 0;
+    for (const Barricade& b : p.barricades) repairAll += barricadeRepairCost(b);
+    if (repairAll > 0 && UI::button(x, by + 12, w, 14, T1("Repair all barricades {0}", money(repairAll)), p.money >= repairAll, P_YGREEN)) {
+        if (doOp(DO_BARR_REPAIR_ALL, repairAll)) Audio::play(Snd::sell, 0.6f, 0.8f);
+    }
+    UI::textWrap(T("The dead break through a wall rather than walk far round it. Gates open for you, your mercs and your friends."),
+                 x + 2, by + 32, w - 4, pal(P_BEIGE));
+}
+
+static void panelSelectedWall(float x, float y, float w) {
+    Profile& p = G.prof;
+    if (s_barrSel < 0 || s_barrSel >= (int)p.barricades.size()) return;
+    Barricade& b = p.barricades[s_barrSel];
+    const BarricadeDef& d = barricadeDef(b.type);
+    float mx = barricadeMaxHp(b);
+    R::rect(x, y, w, 60, pal(P_PURPLE, 0.35f));
+    R::rectOutline(x, y, w, 60, pal(P_ORANGE));
+    R::text(T(d.name), x + 4, y + 4, pal(P_YELLOW));
+    UI::bar(x + 4, y + 15, w - 8, 4, std::max(0.0f, b.hp) / mx, b.hp > 0 ? P_LGREEN : P_CORAL);
+    char buf[48];
+    std::snprintf(buf, sizeof buf, "HP %d/%d", (int)std::max(0.0f, b.hp), (int)mx);
+    R::text(b.hp <= 0 ? T("BROKEN - repair it") : std::string(buf), x + 4, y + 23, pal(b.hp <= 0 ? P_CORAL : P_LAVENDER));
+    int repair = barricadeRepairCost(b);
+    float half = std::floor((w - 12) / 2);
+    if (UI::button(x + 4, y + 40, half, 14, repair > 0 ? T1("Repair {0}", money(repair)) : T("Repaired"), repair > 0 && p.money >= repair, P_YGREEN)) {
+        if (doOp(DO_BARR_REPAIR, repair, 0, b.dx, b.dy)) Audio::play(Snd::sell, 0.6f, 0.8f);
+        return;
+    }
+    int sell = d.cost / 2;
+    if (UI::button(x + 8 + half, y + 40, half, 14, T1("Sell +{0}", money(sell)), true, P_CORAL)) {
+        if (doOp(DO_BARR_SELL, -sell, 0, b.dx, b.dy)) Audio::play(Snd::sell, 0.6f, 1.2f);
+        s_barrSel = -1;
     }
 }
 
@@ -543,6 +699,7 @@ void defense_draw() {
     sceneSetWorld(&w);
     setSunForTime(p.timeMin);
     R::begin(R::WORLD, cam);
+    setSteppers({});
     drawWorldTiles(w, cam, G.realTime);
     Atmo::drawGround(w, cam);
     Art::Piece hatchArt = Art::hatch();
@@ -575,9 +732,20 @@ void defense_draw() {
                 drawTurret(ghost, c, 0.6f);
                 ring(c, turretStats(ghost).range, pal(P_LGREEN, 0.5f));
             }
-        } else if (turretAt(hx, hy) >= 0) {
+        } else if (s_barrType >= 0) {
+            bool ok = canBarricadeAt(s_barrType, hx, hy);
+            R::rect(c.x - 8, c.y - 8, TILE, TILE, pal(ok ? P_LGREEN : P_CORAL, 0.35f));
+        } else if (turretAt(hx, hy) >= 0 || barricadeAt(hx, hy) >= 0) {
             R::rectOutline(c.x - 8, c.y - 8, TILE, TILE, pal(P_YELLOW, 0.8f));
         }
+    } else if (!overUi && s_barrType >= 0 && barricadeOffset(s_barrType, hx, hy)) {
+        Vec2 c = World::tileCenter(w.homeTx + hx, w.homeTy + hy);
+        R::rect(c.x - 8, c.y - 8, TILE, TILE, pal(canBarricadeAt(s_barrType, hx, hy) ? P_LGREEN : P_CORAL, 0.35f));
+    }
+    if (s_barrSel >= 0 && s_barrSel < (int)p.barricades.size()) {
+        const Barricade& b = p.barricades[s_barrSel];
+        Vec2 c = World::tileCenter(w.homeTx + b.dx, w.homeTy + b.dy);
+        R::rectOutline(c.x - 8, c.y - 8, TILE, TILE, pal(P_YELLOW));
     }
     if (s_selected >= 0 && s_selected < (int)p.turrets.size()) {
         const Turret& t = p.turrets[s_selected];
@@ -604,22 +772,25 @@ void defense_draw() {
     R::text(horde, 274, 5, pal(hordeCountdownColor()));
 
     UI::panel(panelX, 20, 200, H - 24, "");
-    if (UI::button(panelX + 4, 24, 94, 14, T("Build"), true, s_tab == 0 ? P_YELLOW : P_WHITE)) s_tab = 0;
-    if (UI::button(panelX + 102, 24, 94, 14, T("Research"), true, s_tab == 1 ? P_YELLOW : P_WHITE)) s_tab = 1;
+    const char* tabs[3] = {"Turrets", "Walls", "Research"};
+    for (int i = 0; i < 3; i++)
+        if (UI::button(panelX + 4 + i * 65, 24, 62, 14, T(tabs[i]), true, s_tab == i ? P_YELLOW : P_WHITE)) s_tab = i;
     if (s_tab == 0) panelBuild(panelX + 4, 42, 192);
+    else if (s_tab == 1) panelWalls(panelX + 4, 42, 192);
     else panelResearch(panelX + 4, 42, 192);
     panelSelected(panelX + 4, H - 124, 192);
+    panelSelectedWall(panelX + 4, H - 88, 192);
 
     // Bunker repairs: sleeping patches it up for free, this is for mid-day.
     int missing = (int)(baseMaxHp() - p.baseHp);
     int baseRepair = missing > 0 ? std::max(10, missing / 2 / 5 * 5) : 0;
-    if (s_selected < 0 && baseRepair > 0 &&
+    if (s_selected < 0 && s_barrSel < 0 && baseRepair > 0 &&
         UI::button(panelX + 4, H - 48, 192, 14, T1("Repair bunker {0}", money(baseRepair)), p.money >= baseRepair, P_YGREEN)) {
         if (doOp(DO_REPAIR_BASE, baseRepair)) Audio::play(Snd::sell, 0.6f, 0.8f);
     }
     if (UI::button(panelX + 4, H - 26, 192, 16, T("Back to bunker"))) { leave(); UI::endFrame(); R::end(); return; }
 
-    if (s_buildType >= 0) {
+    if (s_buildType >= 0 || s_barrType >= 0) {
         const Prompt::Hint hints[] = {{Prompt::Select, T("Place on a free tile")}, {Prompt::AltSelect, T("Cancel")}, {Prompt::Back, T("Back to bunker")}};
         Prompt::row(hints, 3, 6, H - 18, pal(P_LAVENDER));
     } else {
@@ -634,7 +805,7 @@ void defense_draw() {
     // ---- clicks on the compound (after the panel had its chance to eat them)
     if (!overUi && !UI::overPanel()) {
         bool padClick = Input::usingPad() && Input::pressed(GLFW_KEY_E);
-        if (Input::mousePressed(1) || Input::padAltPressed()) { s_buildType = -1; s_selected = -1; }
+        if (Input::mousePressed(1) || Input::padAltPressed()) clearPicks();
         if (Input::mousePressed(0) || padClick) {
             if (s_buildType >= 0) {
                 const TurretDef& d = turretDef(s_buildType);
@@ -644,10 +815,25 @@ void defense_draw() {
                     Audio::play(Snd::door, 0.6f, 1.3f);
                     if (p.money < d.buildCost) s_buildType = -1;
                 }
+            } else if (s_barrType >= 0) {
+                s_dragDx = s_dragDy = 99;
             } else {
                 s_selected = turretAt(hx, hy);
+                s_barrSel = s_selected >= 0 ? -1 : barricadeAt(hx, hy);
             }
         }
+        // Walls and gates: every tile the held click passes over (a line in one drag).
+        bool held = Input::mouseHeld(0) || (Input::usingPad() && Input::pressed(GLFW_KEY_E));
+        if (s_barrType >= 0 && held && (hx != s_dragDx || hy != s_dragDy)) {
+            s_dragDx = hx; s_dragDy = hy;
+            const BarricadeDef& d = barricadeDef(s_barrType);
+            if (canBarricadeAt(s_barrType, hx, hy)) {
+                if ((int)p.barricades.size() >= MAX_BARRICADES) setNotice(T("The compound cannot hold more barricades."));
+                else if (p.money < d.cost) setNotice(T("Not enough money."));
+                else if (doOp(DO_BARR_BUILD, d.cost, s_barrType, hx, hy)) Audio::play(Snd::door, 0.5f, 1.4f);
+            }
+        }
+        if (!Input::mouseHeld(0)) s_dragDx = s_dragDy = 99;
     }
 
     LightingParams& lp = G.lighting;

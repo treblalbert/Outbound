@@ -9,6 +9,7 @@
 #include "game.h"
 #include "input.h"
 #include "lang.h"
+#include "local.h"
 #include "sprites.h"
 #include "ui.h"
 #include "voice.h"
@@ -17,6 +18,7 @@
 #include <ctime>
 #include <functional>
 #include <queue>
+#include <unordered_map>
 
 using namespace Sprites;
 
@@ -46,10 +48,11 @@ const EnemyDef ENEMY_DEFS[6] = {
 // The three zombie kinds from the art pack, in the order Art::zombie() uses.
 struct ZombieKind { float hp, speed, damage, attackCd, reach; int bounty; };
 const ZombieKind ZOMBIE_KINDS[3] = {
-    // All of them outpace you walking (62); only a sprint (96) outruns them.
-    {45, 90, 7, 0.8f, 11, 6},       // small: quick and fragile
-    {260, 66, 24, 1.3f, 14, 25},    // big: soaks bullets, hits like a truck
-    {110, 76, 13, 1.0f, 12, 12},    // axe
+    // 0.12v: twice the health and a fifth faster than before. All of them outpace you
+    // walking (62); a sprint (96) outruns the big and the axe ones, never the small.
+    {90, 108, 7, 0.8f, 11, 6},      // small: quick and fragile
+    {520, 79, 24, 1.3f, 14, 25},    // big: soaks bullets, hits like a truck
+    {220, 91, 13, 1.0f, 12, 12},    // axe
 };
 
 constexpr float PLAYER_R = 5;
@@ -92,7 +95,7 @@ Vec2 findRivalHatch(int slot) {
                 for (int yy = y - 1; yy <= y + 2 && ok; yy++)
                     for (int xx = x - 1; xx <= x + 1 && ok; xx++) {
                         const Tile& t = w.at(xx, yy);
-                        if (t.solid != S_NONE || t.ground == G_WATER || t.ground >= G_FLOOR_WOOD) ok = false;
+                        if (t.solid != S_NONE || t.ground == G_WATER || (t.ground >= G_FLOOR_WOOD && t.ground != G_WASTE)) ok = false;
                     }
                 if (ok) return World::tileCenter(x, y);
             }
@@ -139,7 +142,10 @@ int s_hordeKilled = 0;
 int s_hordeEarned = 0;
 float s_raidElapsed = 0;
 std::string s_hordeNote;       // what happened to a horde fought without you
-struct ZombieCorpse { Vec2 pos; int kind; bool left; float t; };
+struct ZombieCorpse { Vec2 pos; int kind; bool left; float t; int fall = 1; bool noAxe = false; };
+// An axe in flight, landing and lying where it fell (0.12v, the axe zombie's).
+struct FlyingAxe { Vec2 pos, vel; float flight, t = 0; int stage = 0, dir = 2; uint32_t owner; float dmg; };
+std::vector<FlyingAxe> s_axes;
 std::vector<ZombieCorpse> s_zCorpses;
 void resolveHordeOffscreen();
 
@@ -194,7 +200,9 @@ void netInitShadows();
 bool isGuest() { return Coop::guest(); }
 int mySlot() { return Coop::active() ? Coop::localSlot() : 0; }
 // The local player is outside, alive and standing: something the world can hurt.
-bool localPresent() { return G.scene == Scene::Raid && !s_sim && s_deathT < 0 && s_downT < 0; }
+// Local co-op (0.12v): this seat bled out and waits for the others to come home.
+bool s_localOut = false;
+bool localPresent() { return G.scene == Scene::Raid && !s_sim && s_deathT < 0 && s_downT < 0 && !s_localOut; }
 // ---- cars (0.11v)
 // Every car out in today's world: your own (driven by your game) and, in co-op,
 // everyone else's as their owners last described them. One car per player.
@@ -707,7 +715,7 @@ void killEnemy(Enemy& e) {
             missionAddKill((int)EnemyType::Zombie);
         }
         if (s_zCorpses.size() > 160) s_zCorpses.erase(s_zCorpses.begin());
-        s_zCorpses.push_back({e.pos, e.zkind, std::cos(e.angle) < 0, 0});
+        s_zCorpses.push_back({e.pos, e.zkind, std::cos(e.angle) < 0, 0, s_rng.chance(0.5f) ? 1 : 0, e.noAxe});
         addParticles(e.pos, 12, P_CORAL, 20, 70, 0.3f, 0.7f, false, 1);
         G.decals.push_back({e.pos, s_rng.chance(0.5f) ? BLOOD0 : BLOOD1, s_rng.range(0, 6.28f)});
         spawnBloodPool(e.pos);
@@ -748,7 +756,7 @@ void killEnemy(Enemy& e) {
             missionAddKill((int)EnemyType::Zombie);
         }
         if (s_zCorpses.size() > 160) s_zCorpses.erase(s_zCorpses.begin());
-        s_zCorpses.push_back({e.pos, e.zkind, std::cos(e.angle) < 0, 0});
+        s_zCorpses.push_back({e.pos, e.zkind, std::cos(e.angle) < 0, 0, s_rng.chance(0.5f) ? 1 : 0, e.noAxe});
         addParticles(e.pos, 12, P_CORAL, 20, 70, 0.3f, 0.7f, false, 1);
         G.decals.push_back({e.pos, s_rng.chance(0.5f) ? BLOOD0 : BLOOD1, s_rng.range(0, 6.28f)});
         spawnBloodPool(e.pos);
@@ -766,7 +774,9 @@ void killEnemy(Enemy& e) {
     G.decals.push_back({e.pos, s_rng.chance(0.5f) ? BLOOD0 : BLOOD1, s_rng.range(0, 6.28f)});
     spawnBloodPool(e.pos);
 
-    int id = G.world.addContainer(e.pos, CK_CORPSE, -1, -1, (uint8_t)(s_rng.next() | 0x80));   // 0x80: a raider's body
+    // 0x80: a raider's body; 0x40: a helmet rolls off it (see Art::corpse).
+    bool helmeted = e.type == EnemyType::Heavy || e.type == EnemyType::Sniper || e.type == EnemyType::Bandit;
+    int id = G.world.addContainer(e.pos, CK_CORPSE, -1, -1, (uint8_t)((s_rng.next() & 0x3F) | 0x80 | (helmeted ? 0x40 : 0)));
     Container& c = G.world.containers[id];
     c.searchTime = 0.9f;
     Vec2 sp = G.world.surfacePos(e.pos);
@@ -796,6 +806,93 @@ void killEnemy(Enemy& e) {
         addToSlots(c.items, v);
     }
     if (s_rng.chance(0.3f)) addToSlots(c.items, makeItem(IT_BANDAGE, 1));
+}
+
+void damageEnemy(Enemy& e, float dmg, Vec2 dir);
+
+// ---- melee (0.12v): a punch, or a swing of the bat if you carry one. Short reach, a
+// wide arc in front of you, and a shove that buys a moment. It costs a little stamina.
+// A melee weapon in the melee slot (0.12v; before, any bat in your pockets counted).
+bool carryingBat() {
+    const Profile& p = G.prof;
+    return !p.melee.empty() && itemDef(p.melee.id).cat == Cat::Melee;
+}
+
+void melee() {
+    Player& pl = G.player;
+    if (pl.meleeCd > 0 || s_ride >= 0 || s_downT >= 0 || s_deathT >= 0) return;
+    bool bat = carryingBat();
+    float reach = bat ? 26.0f : 19.0f, dmg = bat ? (float)itemDef(G.prof.melee.id).param : 16.0f, push = bat ? 16.0f : 8.0f;
+    float cost = bat ? 10.0f : 7.0f;
+    if (pl.stamina < cost * 0.5f) return;
+    pl.stamina = std::max(0.0f, pl.stamina - cost);
+    pl.meleeCd = bat ? 0.62f : 0.42f;
+    pl.act = 2;
+    pl.actT = 0;
+    sfx(Snd::melee, bat ? 0.7f : 0.5f, bat ? 0.8f : 1.15f);
+    Vec2 f = fromAngle(pl.angle);
+    bool hit = false;
+    for (Enemy& e : G.enemies) {
+        if (e.dead) continue;
+        Vec2 d = e.pos - pl.pos;
+        float l = length(d);
+        if (l > reach + ENEMY_R || l < 0.01f || dot(d / l, f) < 0.35f) continue;
+        hit = true;
+        if (isGuest()) {
+            Net::Writer w;
+            w.u8(Coop::M_HIT);
+            w.u32(e.netId);
+            w.f32(dmg);
+            w.f32(f.x);
+            w.f32(f.y);
+            Coop::toHost(w, true);
+            bloodSplash(e.pos, f);
+        } else {
+            s_dmgOwner = mySlot();
+            damageEnemy(e, dmg, f);
+            s_dmgOwner = -1;
+            if (!e.dead) {
+                // Knocked back and put off its stroke.
+                bool big = e.type == EnemyType::Heavy || (e.type == EnemyType::Zombie && e.zkind == 1);
+                e.pos = G.world.move(e.pos, (d / l) * (big ? push * 0.35f : push), ENEMY_R);
+                e.meleeCd = std::max(e.meleeCd, 0.45f);
+            }
+        }
+    }
+    // Whatever solid stands in front takes the blow too, hit by hit like a bullet's:
+    // a way through a fence, a wall, a hedge or the trees. Fists do far less.
+    if (!hit) {
+        for (float d : {reach * 0.55f, reach * 0.9f}) {
+            Vec2 at = pl.pos + Vec2(0, 3) + f * d;
+            int tx = World::toTile(at.x), ty = World::toTile(at.y);
+            if (!G.world.inBounds(tx, ty)) continue;
+            const Tile& t = G.world.at(tx, ty);
+            if (t.solid == S_NONE) continue;
+            const SolidInfo& si = solidInfo(t.solid);
+            if (si.hp <= 0) continue;   // not breakable (the bunker, cars, barricades...)
+            float tdmg = dmg * (bat ? 1.0f : 0.35f);
+            int col = si.mapColor;
+            if (isGuest()) {
+                Net::Writer w;
+                w.u8(Coop::M_MELEE_TILE);
+                w.u16((uint16_t)tx); w.u16((uint16_t)ty);
+                w.f32(tdmg);
+                Coop::toHost(w, true);
+                addParticles(at, 3, col, 15, 50, 0.2f, 0.35f);
+                sfx(Snd::tile_hit, 0.5f, 0.8f);
+            } else {
+                bool destroyed = G.world.damageTile(tx, ty, tdmg);
+                addParticles(at, destroyed ? 10 : 4, col, 15, destroyed ? 90 : 50, 0.2f, destroyed ? 0.8f : 0.35f, false, destroyed ? 2 : 1);
+                sfx(destroyed ? Snd::tile_break : Snd::tile_hit, destroyed ? 0.7f : 0.5f, s_rng.range(0.75f, 0.95f));
+            }
+            addShake(bat ? 1.5f : 0.6f, pl.pos);
+            break;
+        }
+    }
+    if (hit) {
+        sfx(Snd::hit, 0.6f, bat ? 0.7f : 0.9f);
+        addShake(bat ? 2.0f : 1.0f, pl.pos);
+    }
 }
 
 void damageEnemy(Enemy& e, float dmg, Vec2 dir) {
@@ -884,7 +981,64 @@ void explode(Vec2 pos, float radius, float dmg, bool fromPlayer, bool harmless =
     if (!s_sim && !harmless) alertEnemies(pos, 600);
 }
 
+// ---- spent casings (0.12v): Character/Guns/Bullets. Kicked out of the gun's side,
+// they bounce and lie where they land for a while; a shotgun drops its shell as the
+// next one is racked in.
+struct Casing { Vec2 pos, vel; float z, vz, t, delay, spin; int kind; };
+std::vector<Casing> s_casings;
+
+void ejectCasing(Vec2 origin, float angle, int weaponId) {
+    int base = baseWeapon(weaponId);
+    if (base == IT_LAUNCHER || s_sim) return;
+    Casing c;
+    c.kind = base == IT_SHOTGUN ? 2 : (base == IT_PISTOL || base == IT_REVOLVER || base == IT_SMG) ? 0 : 1;
+    // Out of the right-hand side of the gun, a little back.
+    Vec2 f = fromAngle(angle), side(-f.y, f.x);
+    c.pos = origin - f * 4.0f;
+    c.vel = side * s_rng.range(28, 48) - f * s_rng.range(4, 14);
+    c.z = 6;
+    c.vz = s_rng.range(30, 50);
+    c.t = 0;
+    c.delay = c.kind == 2 ? 0.28f : 0;
+    c.spin = s_rng.range(-14, 14);
+    if (s_casings.size() > 220) s_casings.erase(s_casings.begin());
+    s_casings.push_back(c);
+}
+
+void updateCasings(float dt) {
+    for (Casing& c : s_casings) {
+        if (c.delay > 0) { c.delay -= dt; continue; }
+        c.t += dt;
+        if (c.z > 0 || c.vz > 0) {
+            c.vz -= 260 * dt;
+            c.z += c.vz * dt;
+            c.pos += c.vel * dt;
+            if (c.z <= 0) {
+                c.z = 0;
+                if (c.vz < -25) { c.vz = -c.vz * 0.35f; c.vel *= 0.5f; }
+                else { c.vz = 0; c.vel = Vec2(); }
+            }
+        }
+    }
+    s_casings.erase(std::remove_if(s_casings.begin(), s_casings.end(), [](const Casing& c) { return c.t > 25; }), s_casings.end());
+}
+
+void drawCasings() {
+    static const Assets::Sprite* art[3] = {Assets::find("character/guns/bullets/pistol-bullet_casting"),
+                                           Assets::find("character/guns/bullets/gun-bullet_casing"),
+                                           Assets::find("character/guns/bullets/shotgun-bullet")};
+    for (const Casing& c : s_casings) {
+        if (c.delay > 0) continue;
+        const Assets::Sprite* s = art[c.kind];
+        float a = clampf((25 - c.t) / 4.0f, 0, 1);
+        float rot = c.z > 0 ? c.t * c.spin : c.spin;   // spinning in the air, lying still after
+        if (s) R::spriteAt(*s, 0, c.pos + Vec2(0, -c.z), R::Pivot::Center, 1, Color(1, 1, 1, a), false, rot);
+        else R::rect(std::floor(c.pos.x), std::floor(c.pos.y - c.z), 2, 1, pal(P_YELLOW, a));
+    }
+}
+
 void spawnBullets(Vec2 origin, float angle, const WeaponDef& wd, int weaponId, float spreadMul, float extraSpread, bool fromPlayer, float dmgMul) {
+    ejectCasing(origin, angle, weaponId);
     for (int i = 0; i < wd.pellets; i++) {
         float spread = (wd.spread * spreadMul + extraSpread) * (s_rng.f() + s_rng.f() - 1.0f);
         if (wd.pellets > 1) spread = (wd.spread * spreadMul) * (s_rng.f() * 2 - 1);
@@ -1200,7 +1354,7 @@ void coopDeath() {
             for (const Item& it : chunk) { w.i16(it.id); w.i16(it.count); w.i32(it.data); w.u8((uint8_t)it.tier); w.u8(it.flags); }
             Coop::toHost(w, true);
         } else {
-            int id = G.world.addContainer(pos, CK_CORPSE, -1, -1, (uint8_t)(s_rng.next() & 0x7F));
+            int id = G.world.addContainer(pos, CK_CORPSE, -1, -1, (uint8_t)(s_rng.next() & 0x3F));
             Container& c = G.world.containers[id];
             c.searchTime = 0.9f;
             for (const Item& it : chunk) addToSlots(c.items, it);
@@ -1216,6 +1370,15 @@ void coopDeath() {
     G.summary.dayAfter = p.day;
     p.hp = p.maxHp();
     s_downT = -1;
+    if (Local::active()) {
+        // Local co-op: the rest of the group is still out there on this screen. This
+        // player waits in the bunker until the others come home (or all bleed out).
+        closeLoot();
+        G.panel = Panel::None;
+        s_localOut = true;
+        pushMessage(T1("{0} bled out. What they lost is on their body.", Coop::player(mySlot()).name), P_CORAL);
+        return;
+    }
     pushMessage(T("You wake up in the bunker. What you lost is on your body."), P_YELLOW);
     base_enter(true);
 }
@@ -1518,7 +1681,10 @@ void updatePlayer(float dt) {
         pl.stamina = std::min(p.maxStamina(), pl.stamina + (16 + p.up[UP_ENDURANCE] * 4) * dt);
     }
     if (p.armor.id == IT_VEST_HEAVY) speed *= 0.92f;
-    if (pl.moving) pl.pos = G.world.move(pl.pos, normalize(in) * speed * dt, PLAYER_R);
+    pl.actT += dt;
+    pl.meleeCd -= dt;
+    // Local co-op: nobody walks off the shared screen (Local::leash is a no-op otherwise).
+    if (pl.moving) pl.pos = Local::leash(pl.pos, G.world.move(pl.pos, normalize(in) * speed * dt, PLAYER_R));
 
     Input::setPadCursor(G.panel != Panel::None);
     // At the wheel both hands are busy: no aiming, shooting or throwing. A passenger
@@ -1547,7 +1713,21 @@ void updatePlayer(float dt) {
     if (Input::pressed(GLFW_KEY_Q)) switchWeapon(1 - p.curWeapon);
     if (!panelBlocks && Input::scroll() != 0 && !interactListActive()) switchWeapon(1 - p.curWeapon);
     if (Input::pressed(GLFW_KEY_R)) tryReload();
-    if (Input::pressed(GLFW_KEY_L) && !p.weapons[p.curWeapon].empty()) {
+    // A controller's R3 does two things (0.12v): tap it to hit, hold it for the laser.
+    bool laserPress = !Input::usingPad() && Input::pressed(GLFW_KEY_L), meleePress = !Input::usingPad() && Input::pressed(GLFW_KEY_F);
+    if (Input::usingPad()) {
+        Player& me = G.player;
+        if (Input::down(GLFW_KEY_L)) {
+            if (me.padR3T < 0) { me.padR3T = 0; me.padR3Held = false; }
+            me.padR3T += dt;
+            if (me.padR3T >= 0.4f && !me.padR3Held) { me.padR3Held = true; laserPress = true; }
+        } else {
+            if (me.padR3T >= 0 && !me.padR3Held) meleePress = true;
+            me.padR3T = -1;
+        }
+    }
+    if (meleePress && !panelBlocks) melee();
+    if (laserPress && !p.weapons[p.curWeapon].empty()) {
         // Each gun keeps its own switch, if the crafter fitted it a laser.
         if (p.weapons[p.curWeapon].flags & ITEMF_LASER) {
             p.weapons[p.curWeapon].flags ^= ITEMF_LASER_OFF;
@@ -1782,6 +1962,9 @@ int pathCost(int x, int y) {
     case S_NONE: case S_DOOR_OPEN: return 10;
     case S_BOUNDARY: case S_BUNKER: case S_CAR: case S_CONTAINER: case S_FURNITURE: return -1;
     case S_TURRET: return 90;
+    // Barricades (0.12v): the tougher the wall, the further round it is worth going.
+    case S_BARRICADE: case S_GATE: return barricadeDef(t.variant).reinforced ? 160 : 70;
+    case S_GATE_OPEN: case S_FENCE_GATE_OPEN: return 10;
     default: break;
     }
     const SolidInfo& si = solidInfo(t.solid);
@@ -1848,6 +2031,89 @@ bool homeStep(Vec2 pos, int& bx, int& by) {
 
 void damageBase(float dmg);
 void damageHireling(Hireling& h, float dmg);
+
+// ---- barricades and gates (0.12v)
+Vec2 barricadePos(const Barricade& b) { return World::tileCenter(G.world.homeTx + b.dx, G.world.homeTy + b.dy); }
+int barricadeAtTile(int tx, int ty) {
+    const auto& bs = G.prof.barricades;
+    for (int i = 0; i < (int)bs.size(); i++)
+        if (G.world.homeTx + bs[i].dx == tx && G.world.homeTy + bs[i].dy == ty) return i;
+    return -1;
+}
+
+void damageBarricade(int index, float dmg) {
+    Barricade& b = G.prof.barricades[index];
+    if (b.hp <= 0) return;
+    b.hp -= dmg;
+    b.hurtT = 0.12f;
+    Vec2 c = barricadePos(b);
+    addParticles(c + Vec2(0, -4), 3, P_TAN, 15, 45, 0.2f, 0.5f);
+    sfxAt(Snd::tile_hit, c, G.player.pos, 0.35f, s_rng.range(0.6f, 0.8f));
+    if (b.hp > 0) return;
+    b.hp = 0;
+    int tx = World::toTile(c.x), ty = World::toTile(c.y);
+    if (G.world.inBounds(tx, ty)) { G.world.at(tx, ty).solid = S_NONE; G.world.updateMapPixel(tx, ty); }
+    addParticles(c, 16, P_TAN, 20, 90, 0.3f, 0.9f, true, 2);
+    addParticles(c, 8, P_ORANGE, 10, 50, 0.4f, 0.9f, false, 2);
+    sfxAt(Snd::tile_break, c, G.player.pos, 0.9f, 0.8f);
+    if (!s_sim) pushMessage(T1("A {0} was broken!", T(barricadeDef(b.type).name)), P_CORAL);
+}
+
+// Gates swing open when one of your side comes close and shut behind them - never
+// on someone standing in the way. The frame of the swing is kept per tile.
+std::unordered_map<int, float> s_gateT;
+float gateOpenAt(int tx, int ty) {
+    auto it = s_gateT.find(ty * G.world.w + tx);
+    if (it != s_gateT.end()) return it->second;
+    if (!G.world.inBounds(tx, ty)) return 0;
+    int s = G.world.at(tx, ty).solid;
+    return s == S_GATE_OPEN || s == S_FENCE_GATE_OPEN ? 1.0f : 0.0f;
+}
+
+void updateGates(float dt) {
+    World& w = G.world;
+    if (w.w <= 0) return;
+    std::vector<Vec2> friends;
+    for (const Target& t : s_targets) friends.push_back(t.pos);
+    friends.push_back(G.player.pos);
+    for (const Hireling* h : s_mercs) if (!h->dead) friends.push_back(h->pos);
+    // The gates that matter this frame: any a friend is near, and any still swinging.
+    std::vector<int> gates;
+    auto isGate = [&](int s) { return s == S_GATE || s == S_GATE_OPEN || s == S_FENCE_GATE || s == S_FENCE_GATE_OPEN; };
+    for (const Vec2& f : friends) {
+        int fx = World::toTile(f.x), fy = World::toTile(f.y);
+        for (int y = fy - 2; y <= fy + 2; y++)
+            for (int x = fx - 2; x <= fx + 2; x++)
+                if (w.inBounds(x, y) && isGate(w.at(x, y).solid)) gates.push_back(y * w.w + x);
+    }
+    for (const auto& kv : s_gateT) gates.push_back(kv.first);
+    std::sort(gates.begin(), gates.end());
+    gates.erase(std::unique(gates.begin(), gates.end()), gates.end());
+    for (int idx : gates) {
+        int x = idx % w.w, y = idx / w.w;
+        Tile& t = w.at(x, y);
+        if (!isGate(t.solid)) { s_gateT.erase(idx); continue; }   // broken down meanwhile
+        bool fence = t.solid == S_FENCE_GATE || t.solid == S_FENCE_GATE_OPEN;
+        Vec2 c = World::tileCenter(x, y);
+        bool want = false, inWay = false;
+        for (const Vec2& f : friends) {
+            float d = dist(f, c);
+            if (d < 26) want = true;
+            if (d < 11) inWay = true;
+        }
+        for (const Enemy& e : G.enemies)
+            if (!e.dead && dist(e.pos, c) < 11) { inWay = true; break; }
+        float& o = s_gateT.try_emplace(idx, gateOpenAt(x, y)).first->second;
+        bool wasOpen = o >= 0.5f;
+        o = clampf(o + (want ? 3.0f : -3.0f) * dt, inWay && o >= 0.5f ? 0.5f : 0.0f, 1.0f);
+        bool open = o >= 0.5f;
+        if (open != wasOpen) {
+            t.solid = fence ? (open ? S_FENCE_GATE_OPEN : S_FENCE_GATE) : (open ? S_GATE_OPEN : S_GATE);
+            sfxAt(Snd::door, c, G.player.pos, 0.45f, fence ? 1.25f : 0.8f);
+        }
+        if (o <= 0 && !want) s_gateT.erase(idx);   // shut and nobody about: forget it
+    }
+}
 
 void damageTurret(int index, float dmg) {
     Turret& t = G.prof.turrets[index];
@@ -2265,6 +2531,55 @@ void updateZombie(size_t index, float dt) {
         return;
     }
 
+    // ---- the axe zombie (0.12v): throws its axe at someone it can see a little way
+    // off, then goes and takes it back up if it lies close enough; bare-handed it hits
+    // for less.
+    if (e.zkind == 2) {
+        e.axeCd -= dt;
+        if (e.takeT >= 0) {
+            e.takeT -= dt;
+            if (e.takeT < 0) { e.noAxe = false; e.axeCd = s_rng.range(5, 9); }
+            return;
+        }
+        if (!e.noAxe && e.axeCd <= 0) {
+            e.axeCd = 0.5f;
+            for (const Target& t : s_targets) {
+                float d = dist(e.pos, t.pos);
+                if (d < 48 || d > 125 || !G.world.lineOfSight(e.pos, t.pos)) continue;
+                FlyingAxe a;
+                a.pos = e.pos + Vec2(0, -4);
+                Vec2 aimAt = t.pos + (t.pos - e.pos) * 0.0f;
+                a.vel = normalize(aimAt - e.pos) * 190.0f;
+                a.flight = d / 190.0f;
+                a.dir = (int)Art::dirFromAngle(angleOf(a.vel));
+                a.owner = e.netId;
+                a.dmg = dmg * 1.3f;
+                s_axes.push_back(a);
+                e.noAxe = true;
+                e.angle = angleOf(a.vel);
+                e.meleeCd = zk.attackCd;   // the throw is its swing
+                sfxAt(Snd::toss, e.pos, pl.pos, 0.6f, 0.8f);
+                return;
+            }
+        }
+        if (e.noAxe) {
+            dmg *= 0.6f;
+            // Its axe, lying close: go and pick it up.
+            for (size_t i = 0; i < s_axes.size(); i++) {
+                FlyingAxe& a = s_axes[i];
+                if (a.owner != e.netId || a.stage < 2) continue;
+                float d = dist(a.pos, e.pos);
+                if (d < 9) { e.takeT = 0.8f; s_axes.erase(s_axes.begin() + i); return; }
+                if (d < 110 && nearestTargetDist(e.pos) > 36) {
+                    Vec2 dir = normalize(a.pos - e.pos);
+                    e.pos = G.world.move(e.pos, (dir + separation(e, index) * 0.5f) * speed * dt, ENEMY_R);
+                    turnToward(e.angle, angleOf(dir), 6, dt);
+                    return;
+                }
+            }
+        }
+    }
+
     // ---- choose what to go for
     e.retargetT -= dt;
     if (e.retargetT <= 0) {
@@ -2294,7 +2609,8 @@ void updateZombie(size_t index, float dt) {
     float reach = zk.reach + 6;
     const Target* tt = e.ztarget == -2 ? targetOf(e.tslot) : nullptr;
     if (tt) { goal = tt->pos; reach = zk.reach; }
-    else if (e.ztarget >= 1000 && e.ztarget - 1000 < (int)p.turrets.size() && p.turrets[e.ztarget - 1000].hp > 0) { goal = turretPos(p.turrets[e.ztarget - 1000]); reach = zk.reach + 6; }
+    else if (e.ztarget >= 2000 && e.ztarget - 2000 < (int)p.barricades.size() && p.barricades[e.ztarget - 2000].hp > 0) { goal = barricadePos(p.barricades[e.ztarget - 2000]); reach = zk.reach + 9; }
+    else if (e.ztarget >= 1000 && e.ztarget < 2000 && e.ztarget - 1000 < (int)p.turrets.size() && p.turrets[e.ztarget - 1000].hp > 0) { goal = turretPos(p.turrets[e.ztarget - 1000]); reach = zk.reach + 6; }
     else if (e.ztarget >= 0 && e.ztarget < (int)s_mercs.size() && !s_mercs[e.ztarget]->dead) { goal = s_mercs[e.ztarget]->pos; reach = zk.reach; }
     else e.ztarget = -1;
 
@@ -2305,6 +2621,7 @@ void updateZombie(size_t index, float dt) {
             e.meleeCd = zk.attackCd;
             sfxAt(Snd::melee, e.pos, pl.pos, 0.5f, s_rng.range(0.8f, 1.1f));
             if (e.ztarget == -2) hurtSlot(e.tslot, dmg, "Torn apart by the horde.");
+            else if (e.ztarget >= 2000) damageBarricade(e.ztarget - 2000, dmg);
             else if (e.ztarget >= 1000) damageTurret(e.ztarget - 1000, dmg);
             else if (e.ztarget >= 0) damageHireling(*s_mercs[e.ztarget], dmg);
             else damageBase(dmg);
@@ -2331,6 +2648,10 @@ void updateZombie(size_t index, float dt) {
                 sfxAt(Snd::tile_hit, nc, pl.pos, 0.35f, s_rng.range(0.7f, 0.9f));
             }
             return;
+        }
+        if (next.solid == S_BARRICADE || next.solid == S_GATE) {
+            int bi = barricadeAtTile(nx, ny);
+            if (bi >= 0) e.ztarget = 2000 + bi;
         }
         if (next.solid == S_TURRET) {
             for (int i = 0; i < (int)p.turrets.size(); i++)
@@ -2503,7 +2824,7 @@ void damageHireling(Hireling& h, float dmg) {
     h.hp = 0;
     h.dead = true;
     // Gone for good. What they carried is on the body for whoever finds it.
-    int id = G.world.addContainer(h.pos, CK_CORPSE, -1, -1, (uint8_t)(s_rng.next() & 0x7F));
+    int id = G.world.addContainer(h.pos, CK_CORPSE, -1, -1, (uint8_t)((s_rng.next() & 0x3F) | (hireTier(h.tier).helmet ? 0x40 : 0)));
     Container& c = G.world.containers[id];
     c.searchTime = 0.9f;
     const HireTier& ht = hireTier(h.tier);
@@ -2707,10 +3028,26 @@ void updateHireling(int index, float dt) {
         if (h.target < 0) turnToward(h.angle, angleOf(move), 6, dt);
     }
 
+    h.meleeT += dt;
     if (h.target < 0 || !wd) return;
-    const Enemy& e = G.enemies[h.target];
+    Enemy& e = G.enemies[h.target];
     float want = angleOf(e.pos - h.pos);
     turnToward(h.angle, want, 8, dt);
+    // One of the dead right on top of them (0.12v): a punch to shove it off, then shoot.
+    if (e.type == EnemyType::Zombie && !e.dead && dist(e.pos, h.pos) < 15 && h.meleeT > 0.8f) {
+        h.meleeT = 0;
+        Vec2 f = normalize(e.pos - h.pos);
+        sfxAt(Snd::melee, h.pos, pl.pos, 0.4f, 1.1f);
+        s_dmgOwner = 10 + h.owner;
+        damageEnemy(e, 12.0f * ht.damageMul, f);
+        s_dmgOwner = -1;
+        if (!e.dead) {
+            e.pos = G.world.move(e.pos, f * (e.zkind == 1 ? 3.0f : 8.0f), ENEMY_R);
+            e.meleeCd = std::max(e.meleeCd, 0.4f);
+        }
+        return;
+    }
+    if (h.meleeT < 0.3f) return;
     if (h.mag <= 0) {
         if (h.reloadT <= 0) { h.reloadT = wd->reloadTime * 1.2f; sfxAt(Snd::reload, h.pos, pl.pos, 0.3f); }
         return;
@@ -3068,7 +3405,7 @@ void updateMyCar(float dt) {
     if (driving() && c->speed() > 60 && c->tyreT <= 0) {
         int tx = World::toTile(c->pos.x), ty = World::toTile(c->pos.y);
         int g = G.world.inBounds(tx, ty) ? G.world.at(tx, ty).ground : G_ROAD;
-        bool rough = g == G_GRASS || g == G_DIRT || g == G_SAND || g == G_RUBBLE;
+        bool rough = g == G_GRASS || g == G_DIRT || g == G_SAND || g == G_WASTE || g == G_RUBBLE;
         c->tyreT = rough ? 0.32f : 0.9f;
         if (rough || std::fabs(dot(c->vel, fromAngle(c->angle + PI / 2))) > 40)
             sfxAt(Snd::tyres, c->pos, G.player.pos, clampf(c->speed() / 250.0f, 0.2f, 0.6f), s_rng.range(0.8f, 1.05f));
@@ -3701,6 +4038,7 @@ void updateGrenades(float dt) {
 
 void updateEffects(float dt) {
     updateBloodDrops(dt);
+    updateCasings(dt);
     for (BloodFx& b : s_bloodFx) b.t += dt;
     s_bloodFx.erase(std::remove_if(s_bloodFx.begin(), s_bloodFx.end(), [](const BloodFx& b) { return b.t > 0.3f; }), s_bloodFx.end());
     // Teammates getting hurt bleed on everyone's screen too.
@@ -3803,6 +4141,9 @@ void raid_devBotShoot() {
         if (!e.dead && dist(e.pos, G.player.pos) < bd) { bd = dist(e.pos, G.player.pos); best = &e; }
     if (!best) return;
     G.player.angle = angleOf(best->pos - G.player.pos);
+    if (bd < 24) { melee(); return; }   // close enough to hit
+    G.player.act = 1;
+    G.player.actT = 0;
     if (w.data <= 0) w.data = wd->magSize;
     s_shotOwner = mySlot();
     spawnBullets(G.player.pos + fromAngle(G.player.angle) * 9, G.player.angle, *wd, w.id, 0.5f, 0, true, 1.0f);
@@ -3810,6 +4151,8 @@ void raid_devBotShoot() {
     w.data--;
     G.player.fireCd = 1.0f / wd->fireRate;
     G.player.flashT = 0.09f;
+    G.player.act = 1;
+    G.player.actT = 0;
 }
 
 // Dev: a few zombies of each kind at the edge of the screen, walking in.
@@ -3902,6 +4245,7 @@ void applyDayMemory() {
         if (m.spawnDead[i]) G.enemies[i].dead = true;
 }
 
+static void localSeatsOut();
 static void beginRaid(bool resume) {
     Profile& p = G.prof;
     p.inRaid = true;
@@ -3918,6 +4262,9 @@ static void beginRaid(bool resume) {
     World::withCrypts = true;
     G.world.generate(seed, p.day);
     placeTurretsInWorld(G.world);
+    s_gateT.clear();
+    s_axes.clear();
+    s_casings.clear();
     G.enemies.clear();
     G.bullets.clear();
     G.grenades.clear();
@@ -4076,6 +4423,8 @@ static void beginRaid(bool resume) {
             pushMessage(T("Return to the bunker hatch before 22:00."), P_YELLOW);
     }
     p.resume = RaidResume();
+    s_localOut = false;
+    localSeatsOut();
     raid_saveState();
 }
 
@@ -4117,6 +4466,45 @@ void raid_saveState() {
 namespace {
 // Everything in the world that is not a player: the host (and solo) runs this; a
 // guest only mirrors it.
+// Thrown axes (0.12v): fly to where their target stood, hurt whoever is there, stick
+// in the ground (or a wall) and lie there until taken back up or the day moves on.
+void updateAxes(float dt) {
+    for (size_t i = 0; i < s_axes.size();) {
+        FlyingAxe& a = s_axes[i];
+        a.t += dt;
+        if (a.stage == 0) {
+            Vec2 next = a.pos + a.vel * dt;
+            bool wall = G.world.blocksMove(World::toTile(next.x), World::toTile(next.y + 4));
+            if (!wall) a.pos = next;
+            if (wall || a.t >= a.flight) {
+                a.stage = 1;
+                a.t = 0;
+                for (const Target& t : s_targets)
+                    if (dist(t.pos, a.pos + Vec2(0, 4)) < 11) { hurtSlot(t.slot, a.dmg, "Cut down by a thrown axe."); break; }
+                for (Hireling* h : s_mercs)
+                    if (!h->dead && dist(h->pos, a.pos + Vec2(0, 4)) < 11) { damageHireling(*h, a.dmg); break; }
+                sfxAt(Snd::tile_hit, a.pos, G.player.pos, 0.5f, 0.7f);
+            }
+        } else if (a.stage == 1 && a.t > 0.35f) {
+            a.stage = 2;
+            a.t = 0;
+        } else if (a.stage == 2 && a.t > 40) {
+            s_axes.erase(s_axes.begin() + i);
+            continue;
+        }
+        i++;
+    }
+}
+
+// Everyone else's feet in the puddles (0.12v).
+void othersSplash() {
+    if (localCrypt() >= 0) return;
+    for (const Enemy& e : G.enemies)
+        if (!e.dead && lengthSq(e.pos - e.lastPos) > 0.01f) Atmo::otherStep(G.world, e.pos + Vec2(0, 4), (uint32_t)e.netId * 2654435761u);
+    for (const Hireling* h : s_mercs)
+        if (!h->dead) Atmo::otherStep(G.world, h->pos + Vec2(0, 5), (uint32_t)(uintptr_t)h);
+}
+
 void worldSim(float dt) {
     buildTargets();
     rebuildMercs();
@@ -4129,6 +4517,10 @@ void worldSim(float dt) {
     G.enemies.erase(std::remove_if(G.enemies.begin(), G.enemies.end(), [](const Enemy& e) { return e.dead; }), G.enemies.end());
     crowdZombies();
     updateTurrets(dt);
+    for (Barricade& b : G.prof.barricades) b.hurtT -= dt;
+    updateGates(dt);
+    othersSplash();
+    updateAxes(dt);
     updateSquad(dt);
     buryHirelings();
     // Nobody stands inside a car that drove into them.
@@ -4158,28 +4550,21 @@ void guestSim(float dt) {
     }
     s_mercViews.erase(std::remove_if(s_mercViews.begin(), s_mercViews.end(), [](const MercView& m) { return m.seen > 1.0f; }), s_mercViews.end());
     for (Turret& t : G.prof.turrets) { t.flashT -= dt; t.beamT -= dt; }
+    for (Barricade& b : G.prof.barricades) b.hurtT -= dt;
+    updateGates(dt);
+    othersSplash();
 }
 }  // namespace
 
-void raid_update(float dt) {
-    // --perf: how long the raid's own work takes, every five seconds.
-    struct PerfLog { double t0 = 0, sum = 0, worst = 0; int n = 0; ~PerfLog() {} };
-    static PerfLog perf;
-    extern bool g_devPerf;
-    double perfStart = g_devPerf ? glfwGetTime() : 0;
-    struct PerfEnd { double s; ~PerfEnd() {
-        if (!g_devPerf) return;
-        double d = glfwGetTime() - s;
-        perf.sum += d; perf.n++; perf.worst = std::max(perf.worst, d);
-        if (s - perf.t0 > 5) {
-            std::fprintf(stderr, "[perf] update avg %.2f ms, worst %.2f ms, %zu enemies\n", perf.sum / perf.n * 1000, perf.worst * 1000, G.enemies.size());
-            perf = PerfLog(); perf.t0 = s;
-        }
-    } } perfEnd{perfStart};
-    bool coop = Coop::active();
+// ---- one player's part of a raid frame (0.12v) ------------------------------------
+// Split out of raid_update so local co-op can give every seat its own turn, in its own
+// character and controls, while the world itself runs once.
+
+// Escape and the mechanic's pages: closing panels, opening the pause menu.
+static void playerMenuKeys() {
     if (G.panel == Panel::MechanicTalk) {
         // The mechanic has his say: one page at a time, and no walking off mid-sentence.
-        s_talkT += dt;
+        s_talkT += G.frameDt;
         if (s_talkT > 0.35f && (Input::pressed(GLFW_KEY_E) || Input::keyPressed(GLFW_KEY_SPACE) || Input::keyPressed(GLFW_KEY_ENTER) || Input::mousePressed(0))) {
             Input::consumeMouse();
             sfx(Snd::click, 0.5f, 1.1f);
@@ -4193,39 +4578,28 @@ void raid_update(float dt) {
         else if (G.panel != Panel::None) G.panel = Panel::None;
         else if (s_deathT < 0) G.panel = Panel::Pause;
     }
-    bool paused = G.panel == Panel::Pause || G.panel == Panel::Controls || G.panel == Panel::QuitConfirm || G.panel == Panel::Options;
-    if (paused && !coop) return;  // true pause - but a shared world cannot stop for one player
+}
 
-    if (s_deathT >= 0) {
-        s_deathT -= dt;
-        if (localCrypt() < 0) G.prof.timeMin += GAME_MINUTES_PER_SEC * dt;
-        buildTargets();
-        for (size_t i = 0; i < G.enemies.size(); i++) if (!G.enemies[i].dead) updateEnemy(i, dt);
-        updateBullets(dt);
-        updateEffects(dt);
-        if (s_deathT <= 0) finishDeath();
-        return;
-    }
+static bool pausedPanel() {
+    return G.panel == Panel::Pause || G.panel == Panel::Controls || G.panel == Panel::QuitConfirm || G.panel == Panel::Options;
+}
 
-    if (!paused && s_downT < 0) {
-        if (Input::pressed(GLFW_KEY_TAB)) {
-            if (G.panel == Panel::Inventory) G.panel = Panel::None;
-            else { closeLoot(); G.panel = Panel::Inventory; }
-        }
-        if (Input::pressed(GLFW_KEY_M)) {
-            if (G.panel == Panel::Map) G.panel = Panel::None;
-            else if (!G.prof.hasMap()) pushMessage(T("You have no map. Buy a map & compass from the trader."), P_ORANGE);
-            else { closeLoot(); G.panel = Panel::Map; }
-        }
+// Tab and M: the inventory and the map.
+static void playerPanelKeys(bool paused) {
+    if (paused || s_downT >= 0) return;
+    if (Input::pressed(GLFW_KEY_TAB)) {
+        if (G.panel == Panel::Inventory) G.panel = Panel::None;
+        else { closeLoot(); G.panel = Panel::Inventory; }
     }
+    if (Input::pressed(GLFW_KEY_M)) {
+        if (G.panel == Panel::Map) G.panel = Panel::None;
+        else if (!G.prof.hasMap()) pushMessage(T("You have no map. Buy a map & compass from the trader."), P_ORANGE);
+        else { closeLoot(); G.panel = Panel::Map; }
+    }
+}
 
-    updateTime(dt);
-    if (!isGuest()) {
-        // Autosave now and then, so even a crash or a pulled plug resumes close by.
-        s_autosaveT += dt;
-        if (s_autosaveT >= 30) { s_autosaveT = 0; raid_saveState(); }
-    }
-    Atmo::update(dt, s_hordeActive);
+// What a player's feet and position do: footsteps, finishing a catacomb, spike traps.
+static void playerAmbient(float dt) {
     if (localCrypt() < 0) Atmo::footstep(G.world, G.player.pos + Vec2(0, 6), G.player.moving, dt);
     // Down in a catacomb whose way back is open: it is done for today.
     if (int c = localCrypt(); c >= 0 && G.world.gateOpen(c) && !G.prof.cryptDone(c)) {
@@ -4255,15 +4629,55 @@ void raid_update(float dt) {
     } else {
         G.player.stepT = 0.08f;
     }
-    s_raidElapsed += dt;
-    s_pvpAttackT -= dt;
-    if (!isGuest() && !s_hordeActive && absMinutes() >= G.prof.nextHordeAt && s_raidElapsed > 8) launchHorde();
+}
 
+// Local co-op: the group goes together. Whoever takes the stairs or the way down takes
+// everyone still standing (and anyone down, to be carried along), each a step apart.
+static void groupTravel(std::function<void()> go) {
+    Local::atHome([go] {
+        Local::forEach([&](int k) {
+            if (s_localOut) return;
+            if (s_ride >= 0) leaveCar(false);
+            go();
+            static const Vec2 OFF[4] = {{0, 0}, {12, 4}, {-12, 4}, {0, 10}};
+            Vec2 at = G.player.pos + OFF[k & 3];
+            if (!G.world.collides(at.x, at.y, PLAYER_R)) G.player.pos = at;
+        });
+    });
+}
+
+// Local co-op: home through the hatch, everybody at once (at home, after the turns).
+static void localExtract() {
+    Local::forEach([](int k) {
+        if (k == 0) return;
+        persistMyCar();
+        s_ride = -1;
+        closeLoot();
+        Profile& p = G.prof;
+        if (!s_localOut) {
+            p.extractions++;
+            G.summary = RaidSummary();
+            G.summary.kills = G.raidKills;
+            G.summary.value = carriedValue();
+            G.summary.minutes = p.timeMin - G.raidStartMin;
+            G.summary.dayAfter = p.day;
+        }
+        p.inRaid = false;
+        s_localOut = false;
+    });
+    s_localOut = false;
+    extract();
+}
+
+// Bleeding out, walking, shooting, the car, and whatever E does. False when the raid is
+// over for this frame (home through the hatch, bled out). `worldCars` also moves every
+// car and the mechanic (single player: once a frame from here).
+static bool playerActions(float dt, bool paused, bool worldCars) {
     // Down in co-op: bleed out unless someone gets to you.
     if (s_downT >= 0) {
         s_downT -= dt;
         G.player.moving = false;
-        if (s_downT <= 0) { coopDeath(); return; }
+        if (s_downT <= 0) { coopDeath(); return false; }
     }
     gatherInteract();
     if (!paused && s_downT < 0) updatePlayer(dt);
@@ -4272,8 +4686,10 @@ void raid_update(float dt) {
         if (Car* hc = carOf(0)) { G.player.pos = hc->pos; enterCar(0); }
     // Cars and the mechanic (0.11v).
     updateMyCar(dt);
-    updateCars(dt);
-    updateMechanic(dt);
+    if (worldCars) {
+        updateCars(dt);
+        updateMechanic(dt);
+    }
     if (s_ride < 0) pushOutOfCars(G.player.pos, PLAYER_R);
     if (G.panel == Panel::Mechanic && (dist(G.player.pos, s_mechPos) > 70 || s_ride >= 0)) G.panel = Panel::None;
 
@@ -4325,24 +4741,31 @@ void raid_update(float dt) {
                 pushMessage(T1("Poured a Fuel Can in: {0} L in the tank.", std::to_string((int)std::round(c->fuel))), P_YELLOW);
             }
         } else if (inter == Interact::Stairs) {
-            useStairs(cidx);
+            if (Local::active()) groupTravel([cidx] { useStairs(cidx); });
+            else useStairs(cidx);
         }
         else if (inter == Interact::Hatch) {
             if (hatchSealed()) {
                 pushMessage(G.nightFallen ? T("The hatch is sealed. There is no way in.")
                                           : T("The hatch stays shut until the horde is beaten."), P_CORAL);
+            } else if (Local::active()) {
+                Local::atHome([] { localExtract(); });
+                return false;
             } else {
                 extract();
-                return;
+                return false;
             }
         } else if (inter == Interact::CryptDoor) {
             if (G.prof.cryptBanned(cidx)) {
                 pushMessage(T("You died down there today. The way down is closed to you until tomorrow."), P_CORAL);
+            } else if (Local::active()) {
+                groupTravel([cidx] { if (!G.prof.cryptBanned(cidx)) enterCrypt(cidx, true); });
             } else {
                 enterCrypt(cidx, true);
             }
         } else if (inter == Interact::CryptExit) {
-            enterCrypt(cidx, false);
+            if (Local::active()) groupTravel([cidx] { enterCrypt(cidx, false); });
+            else enterCrypt(cidx, false);
         } else if (inter == Interact::CryptGate) {
             if (!gateFromInside(cidx)) {
                 pushMessage(T("Sealed. It only opens from the other side."), P_CORAL);
@@ -4354,6 +4777,8 @@ void raid_update(float dt) {
             G.lootContainer = cidx;
             G.searchT = 0;
             G.panel = Panel::Loot;
+            G.player.act = 3;   // bends down to it (the pick-up animation)
+            G.player.actT = 0;
             if (!G.world.containers[cidx].searched) sfx(Snd::search, 0.6f);
         } else if (inter == Interact::Door) {
             int state = doorStateNear(G.player.pos, INTERACT_RANGE);
@@ -4389,6 +4814,229 @@ void raid_update(float dt) {
             }
         }
     }
+    return true;
+}
+
+static void uploadMap(float dt) {
+    G.mapUploadT -= dt;
+    if (G.world.mapDirty && G.mapUploadT <= 0 && G.mapTex.id) {
+        R::updateTexture(G.mapTex, G.world.mapPixels.data());
+        G.world.mapDirty = false;
+        G.mapUploadT = 0.25f;
+    }
+}
+
+// ---- local co-op outside (0.12v) --------------------------------------------------
+// Each seat's own copy of the raid's one-player state, swapped with the globals on its
+// turn (see Local::with). Seat 0's lives in the globals, like everything of the host's.
+struct RaidSeat {
+    float spikeCd = 0, deathT = -1, downT = -1, reviveT = 0;
+    std::string deathCause;
+    int reviveSlot = -1, ride = -1;
+    float crashCd = 0, carMsgT = 0, talkT = 0;
+    int talkPage = 0;
+    std::vector<InteractOpt> interOpts;
+    int interSel = 0, interSelKey = -1;
+    int assistTarget = -1;
+    uint32_t assistNet = 0;
+    float assistT = 0;
+    int shopSel = 0, shopColor = 0;
+    int pvpAttacker = -1;
+    float pvpAttackT = 0;
+    bool localOut = false;
+};
+RaidSeat s_raidSeats[Local::MAX_SEATS];
+
+// Seat state that must start clean on a new trip out (or on joining one).
+static void resetSeatRaidState() {
+    s_spikeCd = 0; s_deathT = -1; s_downT = -1; s_reviveT = 0; s_reviveSlot = -1;
+    s_ride = -1; s_crashCd = 0; s_carMsgT = 0; s_talkT = 0; s_talkPage = 0;
+    s_interOpts.clear(); s_interSel = 0; s_interSelKey = -1;
+    s_assistTarget = -1; s_assistNet = 0; s_assistT = 0;
+    s_pvpAttacker = -1; s_pvpAttackT = 0;
+    s_localOut = false;
+}
+
+// Delivers what the world did to this seat's player (damage, rewards, a revive) while
+// it was not its turn: the co-op messages a guest would have been sent.
+static bool s_localDeliver = false;
+static void deliverLocalInbox() {
+    if (!Coop::local()) return;
+    auto msgs = Coop::takeLocalInbox(mySlot());
+    s_localDeliver = true;
+    for (const auto& m : msgs) {
+        if (m.empty()) continue;
+        Net::Reader r(m.data() + 1, m.size() - 1);
+        raid_netMessage(0, m[0], r);
+    }
+    s_localDeliver = false;
+}
+
+// A seat on its way out with the others (going out, or joining while they are out).
+static void seatStepOut(Vec2 at) {
+    resetSeatRaidState();
+    Profile& p = G.prof;
+    G.player = Player();
+    G.player.pos = at;
+    G.player.stamina = p.maxStamina();
+    G.player.angle = PI / 2;
+    for (int i = 0; i < 12; i++) {
+        Vec2 c = at + fromAngle(i * 0.52f) * 16.0f;
+        if (!G.world.collides(G.player.pos.x, G.player.pos.y, PLAYER_R)) break;
+        G.player.pos = c;
+    }
+    if (p.hp <= 0) p.hp = p.maxHp();
+    p.inRaid = true;
+    p.activePhase = Profile::ActivePhase::None;
+    p.activeMarker = 0;
+    p.activeResultT = 0;
+    p.magBonus = 1.0f;
+    G.raidStartMin = p.timeMin;
+    G.raidKills = 0;
+    G.lootContainer = -1;
+    G.panel = Panel::None;
+    Input::suppressFireUntilRelease();
+}
+
+// Every other seat follows player 1 out of the hatch.
+static void localSeatsOut() {
+    if (!Local::active()) return;
+    Vec2 at = G.player.pos;
+    Local::forEach([&](int k) {
+        if (k == 0) return;
+        static const Vec2 OFF[4] = {{0, 0}, {14, 2}, {-14, 2}, {0, 14}};
+        seatStepOut(at + OFF[k & 3]);
+        G.prof.raids++;
+        spawnMyCar();
+    });
+    Local::publishSeats();
+}
+
+// The camera for a shared screen: the middle of everyone still out there, pulled back
+// (up to the zoom-out option's limit) until all of them fit.
+static void groupCamera(float dt) {
+    Vec2 lo, hi;
+    if (!Local::groupBox(lo, hi)) { lo = hi = G.player.pos; }
+    float W = (float)R::width(), H = (float)R::height();
+    float need = std::max((hi.x - lo.x + 90) / std::max(1.0f, W), (hi.y - lo.y + 120) / std::max(1.0f, H));
+    float z = clampf(need, 1.0f, Local::maxZoom());
+    float cur = R::zoom();
+    R::setZoom(cur + (z - cur) * (1.0f - std::exp(-3.0f * dt)));
+    Vec2 mid = (lo + hi) * 0.5f;
+    if (Car* rc = carOf(s_ride); rc && driving()) mid = mid + rc->vel * 0.25f;
+    Vec2 target = mid - Vec2(R::viewW() / 2.0f, R::viewH() / 2.0f);
+    G.cam = G.cam + (target - G.cam) * (1.0f - std::exp(-8.0f * dt));
+}
+
+static void localRaidUpdate(float dt) {
+    // The world's clock, weather and hordes: once, for everybody.
+    updateTime(dt);
+    s_autosaveT += dt;
+    if (s_autosaveT >= 30) { s_autosaveT = 0; raid_saveState(); }
+    Atmo::update(dt, s_hordeActive);
+    s_raidElapsed += dt;
+    if (!s_hordeActive && absMinutes() >= G.prof.nextHordeAt && s_raidElapsed > 8) launchHorde();
+
+    // Each player's turn, in their own character and controls. One menu at a time.
+    Local::forEach([&](int k) {
+        deliverLocalInbox();
+        if (s_localOut) { G.player.moving = false; G.panel = Panel::None; return; }
+        int owner = Local::uiOwner();
+        Input::setPadMenu(G.panel != Panel::None && G.panel != Panel::Map);
+        Input::setDpadWalk(false);
+        if (Local::justJoined()) return;
+        Panel before = G.panel;
+        playerMenuKeys();
+        bool paused = pausedPanel();
+        playerPanelKeys(paused);
+        s_pvpAttackT -= dt;
+        playerAmbient(dt);
+        playerActions(dt, paused, false);
+        if (owner >= 0 && owner != k && before == Panel::None && G.panel != Panel::None && G.panel != Panel::Map) {
+            if (G.panel == Panel::Loot) closeLoot();
+            G.panel = Panel::None;
+            pushMessage(T1("{0} is using a menu. Wait a moment.", Coop::player(owner).name), P_LAVENDER);
+        }
+    });
+    if (G.scene != Scene::Raid || !Local::active()) { Local::runDeferred(); return; }
+
+    // Everyone's cars and the mechanic, then the world.
+    updateCars(dt);
+    updateMechanic(dt);
+    G.flowT -= dt;
+    if (G.flowT <= 0) {
+        G.flowT = 0.4f;
+        Vec2 lo, hi;
+        G.world.computeFlow(Local::groupBox(lo, hi) ? (lo + hi) * 0.5f : G.player.pos, 72);
+    }
+    worldSim(dt);
+    updateBullets(dt);
+    updateGrenades(dt);
+    updateEffects(dt);
+    Local::publishSeats();
+    Local::runDeferred();
+    if (G.scene != Scene::Raid) return;
+
+    // Everybody bled out: the day out is over for the whole group.
+    bool anyone = false;
+    Local::forEach([&](int) { anyone = anyone || !s_localOut; });
+    if (!anyone) {
+        Local::forEach([](int k) { if (k != 0) s_localOut = false; });
+        s_localOut = false;
+        base_enter(true);
+        return;
+    }
+    groupCamera(dt);
+    uploadMap(dt);
+}
+
+void raid_update(float dt) {
+    // --perf: how long the raid's own work takes, every five seconds.
+    struct PerfLog { double t0 = 0, sum = 0, worst = 0; int n = 0; ~PerfLog() {} };
+    static PerfLog perf;
+    extern bool g_devPerf;
+    double perfStart = g_devPerf ? glfwGetTime() : 0;
+    struct PerfEnd { double s; ~PerfEnd() {
+        if (!g_devPerf) return;
+        double d = glfwGetTime() - s;
+        perf.sum += d; perf.n++; perf.worst = std::max(perf.worst, d);
+        if (s - perf.t0 > 5) {
+            std::fprintf(stderr, "[perf] update avg %.2f ms, worst %.2f ms, %zu enemies\n", perf.sum / perf.n * 1000, perf.worst * 1000, G.enemies.size());
+            perf = PerfLog(); perf.t0 = s;
+        }
+    } } perfEnd{perfStart};
+    if (Local::active()) { localRaidUpdate(dt); return; }
+    bool coop = Coop::active();
+    playerMenuKeys();
+    bool paused = pausedPanel();
+    if (paused && !coop) return;  // true pause - but a shared world cannot stop for one player
+
+    if (s_deathT >= 0) {
+        s_deathT -= dt;
+        if (localCrypt() < 0) G.prof.timeMin += GAME_MINUTES_PER_SEC * dt;
+        buildTargets();
+        for (size_t i = 0; i < G.enemies.size(); i++) if (!G.enemies[i].dead) updateEnemy(i, dt);
+        updateBullets(dt);
+        updateEffects(dt);
+        if (s_deathT <= 0) finishDeath();
+        return;
+    }
+
+    playerPanelKeys(paused);
+
+    updateTime(dt);
+    if (!isGuest()) {
+        // Autosave now and then, so even a crash or a pulled plug resumes close by.
+        s_autosaveT += dt;
+        if (s_autosaveT >= 30) { s_autosaveT = 0; raid_saveState(); }
+    }
+    Atmo::update(dt, s_hordeActive);
+    playerAmbient(dt);
+    s_raidElapsed += dt;
+    s_pvpAttackT -= dt;
+    if (!isGuest() && !s_hordeActive && absMinutes() >= G.prof.nextHordeAt && s_raidElapsed > 8) launchHorde();
+
+    if (!playerActions(dt, paused, true)) return;
 
     if (!isGuest()) {
         G.flowT -= dt;
@@ -4420,13 +5068,7 @@ void raid_update(float dt) {
     }
     Vec2 target = G.player.pos - screen + look;
     G.cam = G.cam + (target - G.cam) * (1.0f - std::exp(-(driving() ? 5.0f : 10.0f) * dt));
-
-    G.mapUploadT -= dt;
-    if (G.world.mapDirty && G.mapUploadT <= 0 && G.mapTex.id) {
-        R::updateTexture(G.mapTex, G.world.mapPixels.data());
-        G.world.mapDirty = false;
-        G.mapUploadT = 0.25f;
-    }
+    uploadMap(dt);
 }
 
 // ---------------------------------------------------------------- drawing
@@ -4445,22 +5087,50 @@ float gunLength(int id) {
 }
 
 // Animated character art from the pack, falling back to the built-in sprite.
+// `act` (0.12v): 1 a shot just fired (the gun's recoil, then a shotgun's pump), 2 a
+// punch or a swing of the bat, 3 bending down to pick something up; `actT` seconds
+// since it began. `bat`: a bat is carried (swung in a punch, held when no gun is).
 void drawCharacter(int fallbackSprite, Vec2 pos, float angle, int weapon, bool hurt, bool moving,
                    float animTime, bool reloading, bool helmet, float scale = 1, Color bodyTint = Color(), bool enemy = false,
-                   int shirt = 0) {
+                   int shirt = 0, int act = 0, float actT = 9, bool bat = false) {
     Color tint = hurt ? Color(1.0f, 0.55f, 0.55f) : bodyTint;
     Art::Dir dir = Art::dirFromAngle(angle);
     Vec2 base = pos + Vec2(0, 8 * scale);
     Art::Anim bodyAnim = moving ? Art::Anim::Run : Art::Anim::Idle;
     int bodyFrame = (int)(animTime * (moving ? 12.0f : 6.0f));
-    Art::Piece body = Art::humanBody(dir, bodyAnim, bodyFrame, weapon != IT_NONE, enemy, shirt);
+    bool punching = act == 2 && actT < (bat ? 0.45f : 0.3f);
+    bool picking = act == 3 && actT < 0.5f;
+    bool swinging = punching && bat;
+    bool handsFree = weapon == IT_NONE || picking || punching;
+    Art::Anim helmetAnim = Art::Anim::Idle;
+    Art::Piece body;
+    if (picking) {
+        body = Art::humanBody(dir, Art::Anim::PickUp, (int)(std::min(actT, 0.3f) * 16.0f), false, enemy, shirt);
+        helmetAnim = Art::Anim::PickUp;
+    } else if (punching && !bat) {
+        body = Art::humanBody(dir, Art::Anim::Punch, (int)(actT * 20.0f), false, enemy, shirt);
+        helmetAnim = Art::Anim::Punch;
+    }
+    if (!body.valid()) body = Art::humanBody(dir, bodyAnim, bodyFrame, !handsFree || swinging || (bat && weapon == IT_NONE), enemy, shirt);
     if (!body.valid()) {
         sceneAddSprite(fallbackSprite, pos, tint, 0, scale);
         return;
     }
     Art::Anim gunAnim = reloading ? Art::Anim::Reload : Art::Anim::Idle;
     int gunFrame = reloading ? (int)(animTime * 8.0f) : bodyFrame;
-    Art::Piece gun = Art::humanGun(dir, gunAnim, gunFrame, weapon);
+    if (!reloading && act == 1) {
+        // The kick of the shot, then a shotgun racks the next shell in.
+        bool shotgun = baseWeapon(weapon) == IT_SHOTGUN;
+        if (actT < 0.12f) { gunAnim = Art::Anim::Shoot; gunFrame = (int)(actT * 40.0f); }
+        else if (shotgun && actT < 0.55f) { gunAnim = Art::Anim::Rack; gunFrame = (int)((actT - 0.12f) * 16.0f); }
+    }
+    Art::Piece gun = handsFree ? Art::Piece() : Art::humanGun(dir, gunAnim, gunFrame, weapon);
+    if (gun.valid() && (gunAnim == Art::Anim::Shoot || gunAnim == Art::Anim::Rack))
+        gun.frame = std::min(gun.frame, gun.sprite->frameCount() - 1);
+    // The bat takes the gun's place: swung, or carried when there is no gun.
+    if (bat && (swinging || weapon == IT_NONE) && !picking) {
+        gun = Art::bat(dir, swinging ? Art::Anim::Attack : Art::Anim::Idle, swinging ? (int)(actT * 18.0f) : bodyFrame);
+    }
     // Elite guns are gilded, so you can tell one across the street.
     Color gunTint = tint;
     if (itemDef(weapon).elite) {
@@ -4475,7 +5145,7 @@ void drawCharacter(int fallbackSprite, Vec2 pos, float angle, int weapon, bool h
     sceneAdd(body, base, tint, scale);
     if (gun.valid() && !gunBehind) sceneAddCentered(gun, gunPos, gunTint, scale, 0.02f);
     if (helmet) {
-        Art::Piece h = Art::helmet(dir, bodyFrame);
+        Art::Piece h = Art::helmet(dir, helmetAnim == Art::Anim::Idle ? bodyFrame : (int)(actT * (picking ? 16.0f : 20.0f)), helmetAnim);
         if (h.valid()) sceneAdd(h, base + Vec2(0, -9 * scale), tint, scale, 0.03f);
     }
 }
@@ -4532,11 +5202,11 @@ void queueFlashlightOccluders() {
                 if (pi < 0) break;
                 // Only once, from the prop's own bottom-left tile.
                 const WorldProp& pr = w.props[pi];
-                Art::Piece pc = pr.kind == PROP_WRECK ? Art::wreck(pr.variant, pr.frame) : Art::car(pr.variant);
+                Art::Piece pc = Art::propArt(pr);
                 if (!pc.valid()) break;
                 const Assets::Sprite& s = *pc.sprite;
                 if (x != World::toTile(pr.pos.x - s.w * 0.5f) || y != World::toTile(pr.pos.y - 0.01f)) break;
-                R::occSprite(s.frame(pc.frame), pr.pos, (float)s.w, (float)s.h, pc.flipX != pr.flipX);
+                R::occSprite(s.frame(pc.frame), pr.pos, (float)s.w, (float)s.h, pr.kind == PROP_OBJECT ? pc.flipX : pc.flipX != pr.flipX);
                 break;
             }
             case S_STAIRS: case S_TURRET: break;   // flat, or shot over
@@ -4739,18 +5409,33 @@ void drawMechanicShop() {
         // Price: money, and the parts he wants, counted from your pockets.
         R::text(T("Price") + ":  $" + std::to_string(m.price), rx, sy, pal(p.money >= m.price ? P_YGREEN : P_CORAL));
         sy += 11;
-        float mx = rx;
-        for (const CarMat& mt : m.mats) {
-            if (mt.item == IT_NONE) continue;
-            int have = pocketCount(mt.item);
-            UI::itemIcon(mt.item, mx, sy - 2, 12);
-            std::string t = std::to_string(std::min(have, mt.count)) + "/" + std::to_string(mt.count);
-            R::text(t, mx + 14, sy, pal(have >= mt.count ? P_YGREEN : P_CORAL));
-            if (UI::hover(mx, sy - 2, 14 + R::textWidth(t), 12)) UI::tooltip(T(itemDef(mt.item).name), T("Found out in the world. Carried in your pockets."));
-            mx += 22 + R::textWidth(t);
+        // The parts as a crafting line (UI/Crafting, 0.12v): the car = its parts, each
+        // cell with how many; what you have of each written under it.
+        int ins[CAR_MAX_MATS], counts[CAR_MAX_MATS], n = 0;
+        for (const CarMat& mt : m.mats)
+            if (mt.item != IT_NONE && n < CAR_MAX_MATS) { ins[n] = mt.item; counts[n] = mt.count; n++; }
+        if (n == 0) {
+            R::text(T("No parts needed for this one."), rx, sy, pal(P_LAVENDER));
+            sy += 13;
+        } else {
+            float sw = UI::recipe(rx, sy - 2, IT_NONE, Color(0, 0, 0, 0), ins, counts, n, false);
+            // The car itself, small, in the result's cell.
+            if (const Assets::Sprite* cs = carSprite(mi, s_shopColor)) {
+                const Assets::Frame& f = cs->frame(carFrame(-PI / 2 + 0.3f));
+                float sc = std::min(15.0f / f.w, 15.0f / f.h);
+                R::frame(f, std::floor(rx + 3 + (15 - f.w * sc) / 2), std::floor(sy + 1 + (15 - f.h * sc) / 2), f.w * sc, f.h * sc);
+            }
+            // Which cell is which part: the strips put the inputs after the result.
+            float mx = rx + sw + 6;
+            for (int i = 0; i < n; i++) {
+                int have = pocketCount(ins[i]);
+                std::string t = std::to_string(std::min(have, counts[i])) + "/" + std::to_string(counts[i]);
+                R::text(t, mx, sy + 5, pal(have >= counts[i] ? P_YGREEN : P_CORAL));
+                if (UI::hover(mx, sy + 3, R::textWidth(t), 10)) UI::tooltip(T(itemDef(ins[i]).name), T("Found out in the world. Carried in your pockets."));
+                mx += R::textWidth(t) + 6;
+            }
+            sy += 24;
         }
-        if (mx == rx) R::text(T("No parts needed for this one."), rx, sy, pal(P_LAVENDER));
-        sy += 13;
         // The colour.
         R::text(T("Colour"), rx, sy + 2, pal(P_LAVENDER));
         for (int c = 0; c < CAR_COLORS; c++) {
@@ -4845,7 +5530,7 @@ void drawMechanicShop() {
         }
     }
     R::text(T("Parts are taken from your pockets."), x + 6, y + h - 12, pal(P_LAVENDER));
-    if (UI::button(x + w - 66, y + h - 20, 60, 15, T("Close"))) G.panel = Panel::None;
+    if (UI::button(x + w - 66, y + h - 20, 60, 15, T("Close")) || UI::panelClose()) G.panel = Panel::None;
 }
 
 // Aim assist's target (0.12v): four corners closing in on it as the lock settles.
@@ -4869,9 +5554,14 @@ void drawZombie(const Enemy& e, float animTime) {
     Color tint = e.hurtT > 0 ? Color(1.0f, 0.55f, 0.55f) : Color();
     Art::Dir dir = Art::dirFromAngle(e.angle);
     bool attacking = e.meleeCd > 0.35f;
-    Art::Anim anim = attacking ? Art::Anim::Attack : Art::Anim::Walk;
+    bool moving = lengthSq(e.pos - e.lastPos) > 0.01f;
+    // Standing still they sway on their idle; each swing picks one of the pack's two.
+    Art::Anim anim = attacking ? Art::Anim::Attack : moving ? Art::Anim::Walk : Art::Anim::Idle;
     int kind = e.artVariant % 3;
-    Art::Piece z = Art::zombie(kind, dir, anim, (int)(animTime * 9.0f));
+    bool alt = ((e.netId + (uint32_t)(G.realTime / 1.3f)) & 1) != 0;
+    int frame = (int)(animTime * 9.0f);
+    if (e.takeT >= 0) { anim = Art::Anim::PickUp; frame = (int)((0.8f - e.takeT) * 10.0f); }
+    Art::Piece z = Art::zombie(kind, dir, anim, frame, alt, e.noAxe);
     Vec2 base = e.pos + Vec2(0, 8);
     if (z.valid()) sceneAdd(z, base, tint, kind == 1 ? 1.15f : 1.0f);
     else sceneAddSprite(SHADE, e.pos, tint);
@@ -4937,35 +5627,291 @@ float hudFade(int part, float x, float y, float w, float h) {
     return a;
 }
 
+// The pack's own HUD art (0.12v): a UI sprite at native size, `frac` of its width shown
+// (from the left), for bars that fill. False when the pack does not have it.
+static bool hudArt(const char* key, float x, float y, float frac = 1, Color c = Color()) {
+    const Assets::Sprite* s = Assets::find(std::string("ui/") + key);
+    if (!s || !s->valid()) return false;
+    Assets::Frame f = s->frame(0);
+    frac = clampf(frac, 0, 1);
+    if (frac <= 0) return true;
+    f.u1 = f.u0 + (f.u1 - f.u0) * frac;
+    f.w = (int)std::round(f.w * frac);
+    R::frame(f, x, y, s->w * frac, (float)s->h, c);
+    return true;
+}
+
+// The pack's heart icon for how full your health is: whole, half or empty, drawn over
+// the heart end of its bar.
+static const char* fullnessIcon(bool small, float frac) {
+    int k = frac >= 0.6f ? 0 : frac >= 0.25f ? 1 : 2;
+    static const char* H[2][3] = {{"hp/heart_full", "hp/heart_half", "hp/heart_empty"},
+                                  {"hp/small/heart_small_full", "hp/small/heart_small_half", "hp/small/heart_small_empty"}};
+    return H[small][k];
+}
+
+// A row of `n` small hearts for a health fraction, each whole, half or empty.
+static void drawHearts(float x, float y, float frac, int n, bool small = true) {
+    for (int i = 0; i < n; i++) {
+        float f = clampf(frac * n - i, 0, 1);
+        const char* key = f >= 0.75f ? (small ? "hp/small/heart_small_full" : "hp/heart_full")
+                        : f >= 0.25f ? (small ? "hp/small/heart_small_half" : "hp/heart_half")
+                                     : (small ? "hp/small/heart_small_empty" : "hp/heart_empty");
+        if (!hudArt(key, x + i * (small ? 9.0f : 12.0f), y)) { UI::bar(x, y + 3, n * 9.0f, 3, frac, P_CORAL); return; }
+    }
+}
+
+// A magazine's rounds as a strip of the pack's bullet indicators, full then spent,
+// fitted into `width` (a mark stands for several rounds in a big magazine). With room
+// (`maxH`) and few enough rounds, the big indicators, one per round.
+static void drawBulletStrip(const Item& w, float x, float y, float width, float maxH = 0) {
+    const WeaponDef* wd = weaponDef(w.id);
+    if (!wd) return;
+    int base = baseWeapon(w.id);
+    const char* kind = base == IT_SHOTGUN ? "shotgun" : (base == IT_PISTOL || base == IT_REVOLVER) ? "pistol" : "gun";
+    std::string full = std::string("ui/bullet indicators/small/") + kind + "-bullet_small";
+    const Assets::Sprite* on = Assets::find(full);
+    const Assets::Sprite* off = Assets::find(full + "_empty");
+    {
+        std::string bigKey = std::string("ui/bullet indicators/") + kind + "-bullet";
+        const Assets::Sprite* bOn = Assets::find(bigKey);
+        const Assets::Sprite* bOff = Assets::find(bigKey + "_empty");
+        int mag = std::max(1, magSizeOf(w));
+        if (bOn && bOff && maxH >= bOn->h && mag * (bOn->w + 1.0f) <= width) {
+            for (int i = 0; i < mag; i++) {
+                const Assets::Sprite* s = i < w.data ? bOn : bOff;
+                R::frame(s->frame(0), x + i * (bOn->w + 1.0f), y, (float)s->w, (float)s->h);
+            }
+            return;
+        }
+    }
+    if (!on || !off) return;
+    int mag = std::max(1, magSizeOf(w));
+    int fit = std::max(1, (int)(width / (on->w + 1)));
+    int per = (mag + fit - 1) / fit;                  // rounds per mark
+    int marks = (mag + per - 1) / per, lit = (std::max(0, w.data) + per - 1) / per;
+    for (int i = 0; i < marks; i++) {
+        const Assets::Sprite* s = i < lit ? on : off;
+        R::frame(s->frame(0), x + i * (on->w + 1.0f), y, (float)s->w, (float)s->h);
+    }
+}
+
+// The interaction prompt (one line, or a list to pick from), the revive bar and being
+// down, around `at`: the middle of the screen, or in local co-op each player's own spot.
+static void drawPlayerPrompts(float W, float H, Vec2 at) {
+    (void)W; (void)H;
+    // Interaction prompt: one line, or a list to pick from with the wheel.
+    if (G.panel != Panel::Loot && G.panel != Panel::MechanicTalk && G.panel != Panel::Mechanic && !s_interOpts.empty()) {
+        auto label = [](const InteractOpt& o, int& color) {
+            color = P_WHITE;
+            if (o.kind == Interact::Hatch) {
+                if (hatchSealed()) { color = P_CORAL; return T("The hatch is sealed..."); }
+                color = P_YELLOW;
+                return T("Enter bunker (end raid)");
+            }
+            if (o.kind == Interact::Door)
+                return T(doorStateNear(G.player.pos, INTERACT_RANGE) == S_DOOR_OPEN ? "Close door" : "Open door");
+            if (o.kind == Interact::CryptDoor) {
+                if (G.prof.cryptBanned(o.container)) { color = P_CORAL; return T("The catacombs (closed to you today)"); }
+                color = P_ORANGE;
+                return T("Go down into the catacombs");
+            }
+            if (o.kind == Interact::CryptExit) { color = P_YELLOW; return T("Climb back to the surface"); }
+            if (o.kind == Interact::CryptGate) {
+                if (!gateFromInside(o.container)) { color = P_CORAL; return T("Sealed gate"); }
+                color = P_ORANGE;
+                return T("Raise the gate");
+            }
+            if (o.kind == Interact::Revive) {
+                color = P_YGREEN;
+                return T1("Hold to revive {0}", Coop::player(o.container).name);
+            }
+            if (o.kind == Interact::Mechanic) { color = P_ORANGE; return T("Talk to Rusty (cars)"); }
+            if (o.kind == Interact::Refuel) { color = P_YELLOW; return T("Pour in a Fuel Can"); }
+            if (o.kind == Interact::Stairs) {
+                bool up = o.container >= 0 && o.container < (int)G.world.stairs.size() && G.world.stairs[o.container].up;
+                return up ? T("Go upstairs") : T("Go downstairs");
+            }
+            if (o.kind == Interact::Car) {
+                const Car* c = carOf(o.container);
+                if (c && c->owner == mySlot()) {
+                    color = P_YGREEN;
+                    return c->fuel <= 0 ? T("Get in (no fuel)") : T1("Drive the {0}", T(carModel(c->model).name));
+                }
+                color = P_MINT;
+                return T1("Ride with {0}", Coop::player(o.container).name);
+            }
+            const Container& c = G.world.containers[o.container];
+            std::string s = (c.searched ? T("Open ") : T("Search ")) + T(containerName(c.kind));
+            if (c.searched && containerEmpty(c)) { s += T(" (empty)"); color = P_LAVENDER; }
+            return s;
+        };
+        int n = (int)s_interOpts.size();
+        if (n == 1) {
+            int col;
+            std::string s = label(s_interOpts[0], col);
+            bool sealed = s_interOpts[0].kind == Interact::Hatch && hatchSealed();
+            if (sealed) R::textCentered(s, at.x, at.y + 26, pal(col));
+            else Prompt::labelCentered(Prompt::Interact, s, at.x, at.y + 20, pal(col));
+        } else {
+            float lh = 11, maxW = 0;
+            std::vector<std::string> rows(n);
+            std::vector<int> cols(n);
+            for (int i = 0; i < n; i++) { rows[i] = label(s_interOpts[i], cols[i]); maxW = std::max(maxW, R::textWidth(rows[i])); }
+            lh = 16;
+            std::string chooseText = T("Choose");
+            maxW = std::max(maxW + 18, Prompt::labelWidth(Prompt::Choose, chooseText));
+            float bw = maxW + 10, bh = n * lh + 22;
+            float bx = std::floor(at.x + 18), by = std::floor(at.y - bh / 2 + 8);
+            R::rect(bx, by, bw, bh, pal(P_DARK, 0.72f));
+            R::rectOutline(bx, by, bw, bh, pal(P_PURPLE));
+            for (int i = 0; i < n; i++) {
+                float ry = by + 3 + i * lh;
+                bool sel = i == s_interSel;
+                if (sel) {
+                    R::rect(bx + 1, ry, bw - 2, lh, pal(P_PURPLE, 0.8f));
+                    Prompt::icon(Prompt::Interact, bx + 3, ry);
+                }
+                R::text(rows[i], bx + 22, ry + 5, sel ? pal(cols[i]) : pal(cols[i], 0.6f));
+            }
+            Prompt::label(Prompt::Choose, chooseText, bx + 3, by + bh - 19, pal(P_LAVENDER, 0.85f));
+        }
+    }
+
+    if (s_reviveT > 0) {
+        R::rect(at.x - 31, at.y + 38, 62, 6, pal(P_DARK, 0.85f));
+        UI::bar(at.x - 30, at.y + 39, 60, 4, s_reviveT / 2.5f, P_YGREEN);
+    }
+    if (s_downT >= 0 && Local::active()) {
+        // Local co-op: the others are still playing on this screen, so no dimming, just
+        // the bleed-out bar over this player.
+        bool on = std::fmod(G.realTime, 0.8f) < 0.5f;
+        R::textCentered(T("DOWN"), at.x, at.y - 34, pal(on ? P_CORAL : P_ORANGE), 1);
+        R::rect(at.x - 21, at.y - 24, 42, 5, pal(P_DARK));
+        UI::bar(at.x - 20, at.y - 23, 40, 3, s_downT / 30.0f, P_CORAL);
+    } else if (s_downT >= 0) {
+        R::rect(0, 0, W, H, pal(P_DARK, 0.35f));
+        R::textCentered(T("YOU ARE DOWN"), W / 2, H / 2 - 30, pal(P_CORAL), 2);
+        R::textCentered(T("A teammate can revive you by holding interact next to you."), W / 2, H / 2 - 10, pal(P_BEIGE));
+        R::rect(W / 2 - 51, H / 2 + 2, 102, 6, pal(P_DARK));
+        UI::bar(W / 2 - 50, H / 2 + 3, 100, 4, s_downT / 30.0f, P_CORAL);
+    }
+}
+
+// One player's card in local co-op: their colour and name, health, stamina, the gun in
+// their hands with its magazine round by round, grenades and medicine, and whether they
+// are down or waiting in the bunker. Drawn in that seat's own context.
+static void drawSeatCard(int k, float x, float y, float w) {
+    Profile& p = G.prof;
+    Player& pl = G.player;
+    int col = Local::colorOf(k);
+    const float h = 46;
+    R::rect(x, y, w, h, pal(P_DARK, 0.85f));
+    R::rectOutline(x, y, w, h, pal(col));
+    std::string nm = Coop::player(k).name;
+    while (nm.size() > 1 && R::textWidth(nm) > w - 72) nm.pop_back();
+    R::text(nm, x + 4, y + 3, pal(col));
+    std::string tag = "P" + std::to_string(k + 1);
+    R::text(tag, x + w - 4 - R::textWidth(tag), y + 3, pal(P_LAVENDER));
+    float tagX = x + w - 4 - R::textWidth(tag);
+    if (s_localOut) {
+        R::text(T("Bled out"), x + 4, y + 16, pal(P_CORAL));
+        R::text(T("Waits in the bunker"), x + 4, y + 27, pal(P_LAVENDER));
+        return;
+    }
+    // Health: the pack's small heart bar (channel 40 x 2 at (11, 5)).
+    float hpFrac = clampf(p.hp / p.maxHp(), 0, 1);
+    float hx = x + 3, hy = y + 12;
+    R::rect(hx + 11, hy + 5, 40, 2, pal(P_DARK));
+    if (!(hudArt("hp/small/hp_small", hx + 8, hy + 5, (3 + 40 * hpFrac) / 43.0f) && hudArt("hp/small/hp-bar_small", hx, hy)))
+        UI::bar(hx, hy + 3, 52, 4, hpFrac, P_CORAL);
+    else hudArt(fullnessIcon(true, hpFrac), hx, hy);
+    R::text(std::to_string((int)std::ceil(p.hp)), hx + 56, hy + 2, pal(P_CORAL));
+    UI::bar(hx + 11, hy + 11, 40, 2, pl.stamina / p.maxStamina(), P_YGREEN);
+    if (!p.armor.empty()) UI::bar(hx + 11, hy + 14, 40, 2, p.armor.data / float(itemDef(p.armor.id).param), P_BLUE);
+    if (s_downT >= 0) {
+        bool on = std::fmod(G.realTime, 0.8f) < 0.5f;
+        R::text(T1("DOWN {0}s", std::to_string((int)std::ceil(s_downT))), x + 4, y + 32, pal(on ? P_CORAL : P_ORANGE));
+        return;
+    }
+    // The gun.
+    const Item& gun = p.weapons[p.curWeapon];
+    if (const WeaponDef* wd = weaponDef(gun.id)) {
+        float gx = x + w - 22;
+        hudArt("inventory/inventory-cell", gx - 2, y + 11);
+        UI::itemIcon(gun.id, gx, y + 13, 16);
+        int reserve = countInSlots(p.inv, wd->ammo, p.invCapacity());
+        std::string ammo = std::to_string(gun.data) + "/" + std::to_string(reserve);
+        R::text(ammo, x + w - 4 - R::textWidth(ammo), y + 36, pal(gun.data == 0 ? P_CORAL : P_YELLOW));
+        if (pl.reloadT > 0) {
+            float total = wd->reloadTime * p.reloadMul() * tierReload(itemTier(gun));
+            UI::bar(x + 4, y + 43, w - 8, 1, clampf(1.0f - pl.reloadT / total, 0, 1), P_YELLOW);
+        }
+        drawBulletStrip(gun, x + 4, y + 29, w - 12 - R::textWidth(ammo));
+    }
+    int cap = p.invCapacity();
+    std::string kit = "G" + std::to_string(countInSlots(p.inv, IT_GRENADE, cap)) + " H" +
+                      std::to_string(countInSlots(p.inv, IT_BANDAGE, cap) + countInSlots(p.inv, IT_MEDKIT, cap));
+    R::text(kit, tagX - 6 - R::textWidth(kit), y + 3, pal(P_SAGE));
+}
+
+void drawLocalCards(float W, float H) {
+    int n = Local::count();
+    float left = 92, gap = 4;
+    float w = std::min(150.0f, std::floor((W - left - 6 - gap * (n - 1)) / std::max(1, n)));
+    float x = left, y = H - 50;
+    for (int k = 0; k < Local::MAX_SEATS; k++) {
+        if (!Local::used(k)) continue;
+        Local::with(k, [&] { drawSeatCard(k, x, y, w); });
+        x += w + gap;
+    }
+    std::string hint = Local::joinHint();
+    if (!hint.empty() && Local::uiOwner() < 0) R::text(hint, left, y - 11, pal(P_LAVENDER, 0.75f));
+}
+
 void drawHUD() {
     Profile& p = G.prof;
     Player& pl = G.player;
     float W = (float)R::width(), H = (float)R::height();
+    // Local co-op with more than one player: each has a card along the bottom instead
+    // of the one player's vitals and gun panel (0.12v).
+    bool cards = Local::active() && Local::count() > 1;
+    if (cards) drawLocalCards(W, H);
+    if (!cards) {
 
     // Vitals (and the contract and team list under them: one column).
     hudFade(HUD_LEFT, 0, 0, 200, s_leftColumnBottom);
-    UI::bar(8, 8, 90, 7, p.hp / p.maxHp(), P_CORAL);
-    if (pl.bleedT > 0) {
-        bool on = std::fmod(G.realTime, 0.9f) < 0.6f;
-        R::rectOutline(7, 7, 92, 9, pal(P_CORAL, on ? 1.0f : 0.3f));
-        Prompt::label(Prompt::Heal, T("BLEEDING"), 128, 3, pal(P_CORAL, on ? 1.0f : 0.55f));
+    // Health: the pack's heart and bar (0.12v), its channel 40 px long at (13, 4); the
+    // plain bar when the art is missing.
+    float hpFrac = clampf(p.hp / p.maxHp(), 0, 1);
+    bool bleedOn = pl.bleedT > 0 && std::fmod(G.realTime, 0.9f) < 0.6f;
+    float barX = 8, barW = 90, textX = 102;
+    R::rect(6 + 13, 6 + 4, 40, 4, pal(P_DARK, 0.85f));
+    if (hudArt("hp/hp", 6 + 10, 6 + 4, (3 + 40 * hpFrac) / 43.0f) && hudArt("hp/hp-bar", 6, 6)) {
+        barX = 6 + 13; barW = 40; textX = 6 + 58;
+        hudArt(fullnessIcon(false, hpFrac), 6, 6);   // the heart empties with you
+        if (pl.bleedT > 0) R::rectOutline(6 + 12, 6 + 3, 42, 6, pal(P_CORAL, bleedOn ? 1.0f : 0.3f));
+    } else {
+        UI::bar(8, 8, 90, 7, hpFrac, P_CORAL);
+        if (pl.bleedT > 0) R::rectOutline(7, 7, 92, 9, pal(P_CORAL, bleedOn ? 1.0f : 0.3f));
+        R::rectOutline(7, 7, 92, 9, pal(P_DARK));
     }
-    R::rectOutline(7, 7, 92, 9, pal(P_DARK));
-    R::textShadow(std::to_string((int)std::ceil(p.hp)), 102, 8, pal(P_CORAL));
-    float yy = 19;
+    if (pl.bleedT > 0) Prompt::label(Prompt::Heal, T("BLEEDING"), textX + 26, 3, pal(P_CORAL, bleedOn ? 1.0f : 0.55f));
+    R::textShadow(std::to_string((int)std::ceil(p.hp)), textX, 8, pal(P_CORAL));
+    float yy = 21;
     if (!p.armor.empty()) {
-        UI::bar(8, yy, 90, 4, p.armor.data / float(itemDef(p.armor.id).param), P_BLUE);
-        R::rectOutline(7, yy - 1, 92, 6, pal(P_DARK));
+        UI::bar(barX, yy, barW, 4, p.armor.data / float(itemDef(p.armor.id).param), P_BLUE);
+        R::rectOutline(barX - 1, yy - 1, barW + 2, 6, pal(P_DARK));
         yy += 7;
     }
-    UI::bar(8, yy, 90, 3, pl.stamina / p.maxStamina(), P_YGREEN);
-    R::rectOutline(7, yy - 1, 92, 5, pal(P_DARK));
+    UI::bar(barX, yy, barW, 3, pl.stamina / p.maxStamina(), P_YGREEN);
+    R::rectOutline(barX - 1, yy - 1, barW + 2, 5, pal(P_DARK));
     if (s_hordeActive || p.baseHp < baseMaxHp()) {
         yy += 6;
         bool hit = s_hordeActive && std::fmod(G.realTime, 0.6f) < 0.3f && p.baseHp < baseMaxHp() * 0.35f;
-        UI::bar(8, yy, 90, 4, p.baseHp / baseMaxHp(), hit ? P_YELLOW : P_ORANGE);
-        R::rectOutline(7, yy - 1, 92, 6, pal(P_DARK));
-        R::textShadow(T("BUNKER"), 102, yy - 2, pal(P_ORANGE));
+        UI::bar(barX, yy, barW, 4, p.baseHp / baseMaxHp(), hit ? P_YELLOW : P_ORANGE);
+        R::rectOutline(barX - 1, yy - 1, barW + 2, 6, pal(P_DARK));
+        R::textShadow(T("BUNKER"), textX, yy - 2, pal(P_ORANGE));
         yy += 2;
     }
 
@@ -4989,19 +5935,20 @@ void drawHUD() {
         for (int i = 0; i < Coop::MAX_PLAYERS; i++) {
             const Coop::NetPlayer& np = Coop::player(i);
             if (i == mySlot() || !np.used) continue;
-            R::rect(7, ty, 96, 11, pal(P_DARK, 0.75f));
+            R::rect(7, ty, 128 + R::textWidth(T("BUNKER")), 11, pal(P_DARK, 0.75f));
             R::rect(8, ty + 2, 6, 7, pal(Coop::colorPal(i)));
             std::string nm = np.name.size() > 12 ? np.name.substr(0, 12) : np.name;
             R::text(nm, 17, ty + 2, pal(Coop::colorPal(i)));
             const char* where = np.downed ? "DOWN" : np.where == Coop::W_RAID ? "OUT" : np.where == Coop::W_BASE ? "BUNKER" : "...";
             if (p.rivals) where = "";   // Rivals: you do not know what the others are doing
-            R::text(T(where), 104, ty + 2, pal(np.downed ? P_CORAL : P_LAVENDER));
-            if (np.maxHp > 0) UI::bar(17, ty + 9, 60, 1, np.hp / np.maxHp, P_CORAL);
+            R::text(T(where), 136, ty + 2, pal(np.downed ? P_CORAL : P_LAVENDER));
+            if (np.maxHp > 0 && !p.rivals) drawHearts(96, ty, np.hp / np.maxHp, 4);   // their health, in the pack's small hearts
             ty += 13;
         }
     }
 
     s_leftColumnBottom = yy + (p.mission.active() ? 38 : 10) + (Coop::active() ? 13.0f * (Coop::count() - 1) : 0.0f);
+    }   // !cards
 
     // Clock.
     hudFade(HUD_CLOCK, W / 2 - 80, 0, 160, 50);
@@ -5052,20 +5999,23 @@ void drawHUD() {
 
     // In a car: its dials (0.11v). At the wheel there is no gun in your hands.
     R::setAlpha(1);
-    if (s_ride >= 0) drawCarHud();
-    if (!driving()) {
+    if (s_ride >= 0 && !cards) drawCarHud();
+    if (!driving() && !cards) {
     // Weapon panel, the other gun and the grenade/heal row above it.
-    hudFade(HUD_WEAPON, W - 152, H - 66, 152, 66);
+    // 0.12v: taller, with the magazine drawn round by round under the reload bar.
+    hudFade(HUD_WEAPON, W - 152, H - 84, 152, 84);
     Item& w = p.weapons[p.curWeapon];
-    float bx = W - 128, by = H - 44;
-    R::rect(bx, by, 120, 38, pal(P_DARK, 0.85f));
-    R::rectOutline(bx, by, 120, 38, pal(P_PURPLE));
+    float bx = W - 128, by = H - 62, bh = 56;
+    R::rect(bx, by, 120, bh, pal(P_DARK, 0.85f));
+    R::rectOutline(bx, by, 120, bh, pal(P_PURPLE));
     if (const WeaponDef* wd = weaponDef(w.id)) {
+        hudArt("inventory/inventory-cell", bx + 2, by + 2);
         UI::itemIcon(w.id, bx + 4, by + 4, 16);
         bool elite = itemDef(w.id).elite;
         Color tc = tierColor(itemTier(w));
         R::text(T(itemDef(w.id).name), bx + 24, by + 5, tc);
-        R::rectOutline(bx, by, 120, 38, tc.withA(0.8f));
+        R::rectOutline(bx, by, 120, bh, tc.withA(0.8f));
+        drawBulletStrip(w, bx + 4, by + 38, 112, bh - 39);
         if (elite) R::text(T("ELITE"), bx + 116 - R::textWidth(T("ELITE")), by + 5, pal(P_YELLOW, 0.6f + 0.4f * std::sin(G.realTime * 4.0f)));
         int reserve = countInSlots(p.inv, wd->ammo, p.invCapacity());
         std::string ammo = std::to_string(w.data);
@@ -5107,6 +6057,7 @@ void drawHUD() {
     const Item& other = p.weapons[1 - p.curWeapon];
     if (!other.empty()) {
         R::rect(bx - 22, by + 14, 20, 20, pal(P_DARK, 0.85f));
+        hudArt("inventory/inventory-cell", bx - 22, by + 14);
         UI::itemIcon(other.id, bx - 20, by + 16, 16, pal(P_LAVENDER));
         Prompt::icon(Prompt::Swap, bx - 20, by - 3, 0.9f);
     }
@@ -5222,95 +6173,7 @@ void drawHUD() {
         }
     }
 
-    // Interaction prompt: one line, or a list to pick from with the wheel.
-    if (G.panel != Panel::Loot && G.panel != Panel::MechanicTalk && G.panel != Panel::Mechanic && !s_interOpts.empty()) {
-        auto label = [](const InteractOpt& o, int& color) {
-            color = P_WHITE;
-            if (o.kind == Interact::Hatch) {
-                if (hatchSealed()) { color = P_CORAL; return T("The hatch is sealed..."); }
-                color = P_YELLOW;
-                return T("Enter bunker (end raid)");
-            }
-            if (o.kind == Interact::Door)
-                return T(doorStateNear(G.player.pos, INTERACT_RANGE) == S_DOOR_OPEN ? "Close door" : "Open door");
-            if (o.kind == Interact::CryptDoor) {
-                if (G.prof.cryptBanned(o.container)) { color = P_CORAL; return T("The catacombs (closed to you today)"); }
-                color = P_ORANGE;
-                return T("Go down into the catacombs");
-            }
-            if (o.kind == Interact::CryptExit) { color = P_YELLOW; return T("Climb back to the surface"); }
-            if (o.kind == Interact::CryptGate) {
-                if (!gateFromInside(o.container)) { color = P_CORAL; return T("Sealed gate"); }
-                color = P_ORANGE;
-                return T("Raise the gate");
-            }
-            if (o.kind == Interact::Revive) {
-                color = P_YGREEN;
-                return T1("Hold to revive {0}", Coop::player(o.container).name);
-            }
-            if (o.kind == Interact::Mechanic) { color = P_ORANGE; return T("Talk to Rusty (cars)"); }
-            if (o.kind == Interact::Refuel) { color = P_YELLOW; return T("Pour in a Fuel Can"); }
-            if (o.kind == Interact::Stairs) {
-                bool up = o.container >= 0 && o.container < (int)G.world.stairs.size() && G.world.stairs[o.container].up;
-                return up ? T("Go upstairs") : T("Go downstairs");
-            }
-            if (o.kind == Interact::Car) {
-                const Car* c = carOf(o.container);
-                if (c && c->owner == mySlot()) {
-                    color = P_YGREEN;
-                    return c->fuel <= 0 ? T("Get in (no fuel)") : T1("Drive the {0}", T(carModel(c->model).name));
-                }
-                color = P_MINT;
-                return T1("Ride with {0}", Coop::player(o.container).name);
-            }
-            const Container& c = G.world.containers[o.container];
-            std::string s = (c.searched ? T("Open ") : T("Search ")) + T(containerName(c.kind));
-            if (c.searched && containerEmpty(c)) { s += T(" (empty)"); color = P_LAVENDER; }
-            return s;
-        };
-        int n = (int)s_interOpts.size();
-        if (n == 1) {
-            int col;
-            std::string s = label(s_interOpts[0], col);
-            bool sealed = s_interOpts[0].kind == Interact::Hatch && hatchSealed();
-            if (sealed) R::textCentered(s, W / 2, H / 2 + 26, pal(col));
-            else Prompt::labelCentered(Prompt::Interact, s, W / 2, H / 2 + 20, pal(col));
-        } else {
-            float lh = 11, maxW = 0;
-            std::vector<std::string> rows(n);
-            std::vector<int> cols(n);
-            for (int i = 0; i < n; i++) { rows[i] = label(s_interOpts[i], cols[i]); maxW = std::max(maxW, R::textWidth(rows[i])); }
-            lh = 16;
-            std::string chooseText = T("Choose");
-            maxW = std::max(maxW + 18, Prompt::labelWidth(Prompt::Choose, chooseText));
-            float bw = maxW + 10, bh = n * lh + 22;
-            float bx = std::floor(W / 2 + 18), by = std::floor(H / 2 - bh / 2 + 8);
-            R::rect(bx, by, bw, bh, pal(P_DARK, 0.72f));
-            R::rectOutline(bx, by, bw, bh, pal(P_PURPLE));
-            for (int i = 0; i < n; i++) {
-                float ry = by + 3 + i * lh;
-                bool sel = i == s_interSel;
-                if (sel) {
-                    R::rect(bx + 1, ry, bw - 2, lh, pal(P_PURPLE, 0.8f));
-                    Prompt::icon(Prompt::Interact, bx + 3, ry);
-                }
-                R::text(rows[i], bx + 22, ry + 5, sel ? pal(cols[i]) : pal(cols[i], 0.6f));
-            }
-            Prompt::label(Prompt::Choose, chooseText, bx + 3, by + bh - 19, pal(P_LAVENDER, 0.85f));
-        }
-    }
-
-    if (s_reviveT > 0) {
-        R::rect(W / 2 - 31, H / 2 + 38, 62, 6, pal(P_DARK, 0.85f));
-        UI::bar(W / 2 - 30, H / 2 + 39, 60, 4, s_reviveT / 2.5f, P_YGREEN);
-    }
-    if (s_downT >= 0) {
-        R::rect(0, 0, W, H, pal(P_DARK, 0.35f));
-        R::textCentered(T("YOU ARE DOWN"), W / 2, H / 2 - 30, pal(P_CORAL), 2);
-        R::textCentered(T("A teammate can revive you by holding interact next to you."), W / 2, H / 2 - 10, pal(P_BEIGE));
-        R::rect(W / 2 - 51, H / 2 + 2, 102, 6, pal(P_DARK));
-        UI::bar(W / 2 - 50, H / 2 + 3, 100, 4, s_downT / 30.0f, P_CORAL);
-    }
+    if (!Local::active()) drawPlayerPrompts(W, H, Vec2(W / 2, H / 2));
     if (s_bigT > 0) {
         float s = 2;
         R::textCentered(s_bigText, W / 2, H * 0.28f, pal(s_bigColor), s);
@@ -5325,10 +6188,26 @@ void drawLootPanel() {
     // need more width than twelve slots do, and it matches the inventory beside it.
     float cw = 6 * SLOT + 12, ch = 18 + 2 * SLOT + 22;
     float cx = std::floor(W / 2 - cw - 8), cy = std::floor(H / 2 - 100);
-    UI::panel(cx, cy, cw, ch, T(containerName(c.kind)));
+    // Still being searched: the pack's empty grid (UI/Inventory/Inventory_2), its cells
+    // lighting up one by one as you go through it (0.12v).
+    const Assets::Sprite* grid = c.searched ? nullptr : UI::skin("inventory/inventory_2");
+    if (grid) {
+        const Assets::Frame& f = grid->frame(0);
+        float gx = std::floor(cx + cw / 2 - f.w / 2.0f);
+        R::rect(gx + 2, cy + 2, (float)f.w, (float)f.h, pal(P_DARK, 0.6f));
+        R::frame(f, gx, cy, (float)f.w, (float)f.h);
+        float prog = clampf(G.searchT / c.searchTime, 0, 1);
+        int lit = (int)(prog * 18);
+        for (int i = 0; i < lit; i++)
+            R::rect(gx + 9 + (i % 6) * 22, cy + 14 + (i / 6) * 23, 15, 7, pal(P_YELLOW, 0.18f));
+        R::textShadow(T(containerName(c.kind)) + " - " + T("Searching..."), gx + 7, cy + 3, pal(P_BEIGE), 1, pal(P_DARK));
+        UI::bar(gx + 8, cy + f.h - 8, f.w - 16, 3, prog, P_YELLOW);
+    } else UI::panel(cx, cy, cw, ch, T(containerName(c.kind)));
     if (!c.searched) {
-        R::text(T("Searching..."), cx + 8, cy + 30, pal(P_BEIGE));
-        UI::bar(cx + 8, cy + 42, cw - 16, 4, G.searchT / c.searchTime, P_YELLOW);
+        if (!grid) {
+            R::text(T("Searching..."), cx + 8, cy + 30, pal(P_BEIGE));
+            UI::bar(cx + 8, cy + 42, cw - 16, 4, G.searchT / c.searchTime, P_YELLOW);
+        }
     } else {
         drawSlotGrid(cx + 6, cy + 18, c.items, 12, 6, InvMode::Loot, true);
         if (containerEmpty(c)) R::text(T("Empty"), cx + 8, cy + 30, pal(P_PURPLE));
@@ -5339,13 +6218,16 @@ void drawLootPanel() {
                 if (c.items[i].empty()) continue;
                 const ItemDef& d = itemDef(c.items[i].id);
                 int lootedId = c.items[i].id;
-                bool autoEquip = (d.cat == Cat::Weapon && (p.weapons[0].empty() || p.weapons[1].empty())) ||
+                bool autoEquip = (d.cat == Cat::Weapon && p.autoEquip && (p.weapons[0].empty() || p.weapons[1].empty())) ||
+                                 (d.cat == Cat::Melee && p.autoEquip && p.melee.empty()) ||
                                  (d.cat == Cat::Armor && p.armor.empty()) || (d.cat == Cat::Backpack && p.backpack.empty());
                 if (autoEquip && equipFrom(c.items, i)) { missionAddLoot(lootedId); continue; }
                 if (moveItem(c.items, i, p.inv, p.invCapacity()) > 0) missionAddLoot(lootedId);
                 if (!c.items[i].empty()) full = true;
             }
             sfx(Snd::pickup, 0.6f);
+            G.player.act = 3;
+            G.player.actT = 0;
             if (full) pushMessage(T("Inventory full"), P_CORAL);
         }
     }
@@ -5481,6 +6363,32 @@ void drawPausePanel() {
         }
         if (UI::button(x + 10, y + 42, w - 20, 16, T("Controls"))) G.panel = Panel::Controls;
         if (UI::button(x + 10, y + 102, w - 20, 16, T("Options"))) G.panel = Panel::Options;
+        if (Local::active()) {
+            // Local co-op (0.12v): a joined player drops out from here; player 1 can send
+            // everyone else home, or save and quit.
+            if (Local::current() != 0) {
+                if (UI::button(x + 10, y + 62, w - 20, 16, T("Leave (drop out)"), true, P_CORAL)) {
+                    G.panel = Panel::None;
+                    Local::leaveSeat(Local::current());
+                }
+            } else {
+                if (UI::button(x + 10, y + 62, w - 20, 16, T("Everyone else out"), true, P_ORANGE)) {
+                    G.panel = Panel::None;
+                    Local::end();
+                }
+                if (UI::button(x + 10, y + 82, w - 20, 16, T("Save & quit to menu"))) {
+                    G.panel = Panel::None;
+                    Local::atHome([] {
+                        raid_saveState();
+                        if (Local::active()) Local::end();
+                        if (G.scene == Scene::Raid) { G.scene = Scene::Menu; menu_init(); }
+                    });
+                    return;
+                }
+            }
+            R::textCentered(T("Local co-op: time keeps running"), W / 2, y + h - 14, pal(P_LAVENDER), 1, false);
+            return;
+        }
         if (Coop::active()) {
             // A shared world has no pause and no abandoning: only leaving it.
             if (UI::button(x + 10, y + 62, w - 20, 16, Coop::host() ? T("End session (saves)") : T("Leave the game"), true, P_CORAL)) {
@@ -5521,12 +6429,13 @@ void drawPausePanel() {
         float w = 220, h = 84, x = std::floor(W / 2 - w / 2), y = std::floor(H / 2 - h / 2);
         UI::panel(x, y, w, h, T("ABANDON RAID?"));
         R::text(T("You will lose everything you carry\nand restart the current day."), x + 10, y + 22, pal(P_BEIGE));
-        if (UI::button(x + 10, y + 56, 95, 16, T("Abandon"), true, P_CORAL)) {
+        int yn = UI::yesNo(x + w - 33, y + 4);
+        if (UI::button(x + 10, y + 56, 95, 16, T("Abandon"), true, P_CORAL) || yn == 1) {
             G.panel = Panel::None;
             s_deathCause = "You abandoned the raid.";
             finishDeath();
         }
-        if (UI::button(x + w - 105, y + 56, 95, 16, T("Cancel"))) G.panel = Panel::Pause;
+        if (UI::button(x + w - 105, y + 56, 95, 16, T("Cancel")) || yn == 2) G.panel = Panel::Pause;
     }
 }
 
@@ -5803,6 +6712,10 @@ void updateAmbience(float dt) {
     }
 }
 
+void drawRaidPanels();
+void drawLocalRaidUi();
+void raidLighting(Profile& p, Vec2 cam);
+
 void raid_draw() {
     Profile& p = G.prof;
     updateAmbience(G.frameDt);
@@ -5816,6 +6729,20 @@ void raid_draw() {
     if (localCrypt() >= 0) R::setSun(Vec2(), 0);   // no sun below
     else setSunForTime(G.prof.timeMin);
     R::begin(R::WORLD, cam);
+    {
+        // Feet in the grass (0.12v): everyone standing about on screen.
+        std::vector<Vec2> feet;
+        Vec2 c0(std::floor(cam.x) - 16, std::floor(cam.y) - 16);
+        auto add = [&](Vec2 p) {
+            if (p.x > c0.x && p.y > c0.y && p.x < c0.x + R::viewW() + 32 && p.y < c0.y + R::viewH() + 32) feet.push_back(p);
+        };
+        if (s_ride < 0 && s_deathT < 0) add(G.player.pos + Vec2(0, 6));
+        for (const Enemy& e : G.enemies) if (!e.dead) add(e.pos + Vec2(0, 6));
+        for (const Hireling* h : s_mercs) if (!h->dead && h->rideCar < 0) add(h->pos + Vec2(0, 6));
+        for (const MercView& m : s_mercViews) if (!m.ride) add(m.pos + Vec2(0, 6));
+        for (const Target& tg : s_targets) add(tg.pos + Vec2(0, 6));
+        setSteppers(feet);
+    }
     drawWorldTiles(G.world, cam, t);
     for (const BloodSpeck& s : s_specks) {
         if (!onScreen(s.pos)) continue;
@@ -5838,10 +6765,22 @@ void raid_draw() {
     if (localCrypt() < 0) Atmo::drawGround(G.world, cam);
     drawBloodPools();
     for (const ZombieCorpse& c : s_zCorpses) {
-        Art::Piece body = Art::zombieDeath(c.kind, c.left, (int)(c.t * 10.0f));
+        Art::Piece body = Art::zombieDeath(c.kind, c.left, (int)(c.t * 10.0f), c.fall, c.noAxe);
         if (!body.valid()) continue;
         float a = clampf((30.0f - c.t) / 6.0f, 0, 1);
         R::spriteAt(*body.sprite, body.frame, c.pos + Vec2(0, 7), R::Pivot::Bottom, 1, Color(1, 1, 1, a), body.flipX);
+    }
+    drawCasings();
+    for (const FlyingAxe& a : s_axes) {
+        if (a.stage == 0) {
+            // Spinning through the air, in an arc.
+            float h = std::sin(clampf(a.t / std::max(0.05f, a.flight), 0, 1) * PI) * 10.0f;
+            Art::Piece ap = Art::thrownAxe((Art::Dir)a.dir, 0, (int)(a.t * 16.0f));
+            if (ap.valid()) R::spriteAt(*ap.sprite, ap.frame, a.pos + Vec2(0, -h), R::Pivot::Center, 1, Color(), ap.flipX);
+        } else {
+            Art::Piece ap = Art::thrownAxe((Art::Dir)a.dir, a.stage, a.stage == 1 ? (int)(a.t * 20.0f) : 99);
+            if (ap.valid()) R::spriteAt(*ap.sprite, ap.frame, a.pos + Vec2(0, 6), R::Pivot::Bottom, 1, Color(), ap.flipX);
+        }
     }
     // Sealed while a horde is on or the night has fallen (0.11v): the lid comes down,
     // two steel bars are dropped across it and its lamp turns red.
@@ -5879,7 +6818,8 @@ void raid_draw() {
             bool moving = lengthSq(e.pos - e.lastPos) > 0.02f;
             bool helmet = e.type == EnemyType::Heavy || e.type == EnemyType::Sniper || e.type == EnemyType::Bandit;
             drawCharacter(ENEMY_DEFS[(int)e.type].sprite, e.pos, e.angle, e.weapon, e.hurtT > 0, moving, animTime,
-                          e.reloadT > 0, helmet, e.type == EnemyType::Heavy ? 1.15f : 1.0f, Color(), true);
+                          e.reloadT > 0, helmet, e.type == EnemyType::Heavy ? 1.15f : 1.0f, Color(), true, 0,
+                          e.flashT > 0 ? 1 : 0, 0.09f - e.flashT);
         }
     }
     if (isGuest()) {
@@ -5895,18 +6835,23 @@ void raid_draw() {
             if (h.dead || !onScreen(h.pos) || h.rideCar >= 0) continue;
             const HireTier& ht = hireTier(h.tier);
             drawCharacter(PLAYER, h.pos, h.angle, ht.weapon, h.hurtT > 0, lengthSq(h.pos - h.lastPos) > 0.01f,
-                          G.realTime + h.tier * 0.31f, h.reloadT > 0, ht.helmet);
+                          G.realTime + h.tier * 0.31f, h.reloadT > 0, ht.helmet, 1, Color(), false, 0,
+                          h.meleeT < 0.4f ? 2 : h.flashT > 0 ? 1 : 0, h.meleeT < 0.4f ? h.meleeT : 0.09f - h.flashT);
         }
     }
     drawNetPlayers(Coop::W_RAID);
-    if (s_downT >= 0) {
+    if (s_localOut) {
+        // Local co-op: player 1 bled out and waits in the bunker.
+    } else if (s_downT >= 0) {
         Art::Dir d = Art::dirFromAngle(G.player.angle);
         Art::Piece dead = Art::humanBody(d, Art::Anim::Death, 99, false, false, p.shirt);
         if (dead.valid()) sceneAdd(dead, G.player.pos + Vec2(0, 8));
     } else if (s_deathT < 0) {
         if (s_ride < 0)   // in a car you are inside it, out of sight
             drawCharacter(PLAYER, G.player.pos, G.player.angle, p.weapons[p.curWeapon].id, G.player.hurtT > 0,
-                          G.player.moving, G.realTime, G.player.reloadT > 0, false, 1, Color(), false, p.shirt);
+                          G.player.moving, G.realTime, G.player.reloadT > 0, false, 1, Color(), false, p.shirt, G.player.act,
+                          // Looting: stays bent over the container while it is open.
+                          G.panel == Panel::Loot && G.player.act == 3 ? std::min(G.player.actT, 0.3f) : G.player.actT, carryingBat());
     } else {
         Art::Dir d = Art::dirFromAngle(G.player.angle);
         Art::Piece dead = Art::humanBody(d, Art::Anim::Death, (int)((3.0f - s_deathT) * 8.0f), false, false, p.shirt);
@@ -6062,6 +7007,15 @@ void raid_draw() {
     R::begin(R::UI, Vec2());
     drawIndoorView(cam);     // on top of the lit, fogged world, under the HUD
     if (!G.devNoHud) drawHUD();
+    if (Local::active()) { drawLocalRaidUi(); UI::endFrame(); R::end(); raidLighting(p, cam); return; }
+    drawRaidPanels();
+    raidLighting(p, cam);
+}
+
+// The panel that is up (the one player's, or in local co-op whoever owns the menu),
+// and the aim pointer.
+void drawRaidPanels() {
+    Profile& p = G.prof;
     switch (G.panel) {
     case Panel::Inventory: drawInventoryPanel(std::floor(R::width() / 2.0f - 70), std::floor(R::height() / 2.0f - 110), InvMode::Raid, nullptr, 0); break;
     case Panel::Loot: drawLootPanel(); break;
@@ -6096,10 +7050,49 @@ void raid_draw() {
         float W = (float)R::width(), H = (float)R::height();
         Prompt::labelCentered(Prompt::Back, T("Close"), W / 2, H - 20, pal(P_LAVENDER));
     }
+    (void)p;
+    if (Local::active()) return;
     UI::endFrame();
     R::end();
+}
 
-    // ---- lighting
+// Local co-op (0.12v): every player's pointer in their colour, and the one menu that
+// is up, worked by whoever opened it.
+void drawLocalRaidUi() {
+    float W = (float)R::width(), H = (float)R::height();
+    int owner = Local::uiOwner();
+    for (int k = 0; k < Local::MAX_SEATS; k++) {
+        if (!Local::used(k)) continue;
+        Local::with(k, [&] {
+            if (s_localOut || G.devClean) return;
+            if (G.panel == Panel::None) drawPlayerPrompts(W, H, toScreen(G.player.pos));
+            if (s_downT >= 0 || (G.panel != Panel::None && G.panel != Panel::Map)) return;
+            Color col = pal(Local::colorOf(k));
+            if (Input::usingPad()) {
+                Vec2 c = toScreen(G.player.pos);
+                Vec2 d = fromAngle(G.player.angle);
+                for (int i = 0; i < 3; i++) R::rect(std::floor(c.x + d.x * (16 + i * 6)), std::floor(c.y + d.y * (16 + i * 6)), 1, 1, col.withA(0.35f + i * 0.15f));
+                R::sprite(ARROW, c + d * 38, G.player.angle, 1, col);
+                drawLockOn();
+            } else {
+                R::sprite(CROSSHAIR, Input::mouse(), 0, 1, col);
+            }
+        });
+    }
+    if (owner >= 0)
+        Local::with(owner, [&] {
+            std::string who = T1("{0}'s menu", Coop::player(owner).name);
+            R::rect(W - 8 - R::textWidth(who) - 8, 4, R::textWidth(who) + 12, 13, pal(P_DARK, 0.85f));
+            R::text(who, W - 8 - R::textWidth(who) - 2, 7, pal(Local::colorOf(owner)));
+            drawRaidPanels();
+        });
+    // A map one player has open does not stop the others: it is theirs to close.
+    for (int k = 0; k < Local::MAX_SEATS; k++)
+        if (Local::used(k) && k != owner) Local::with(k, [&] { if (G.panel == Panel::Map) drawMapPanel(); });
+}
+
+// ---- lighting
+void raidLighting(Profile& p, Vec2 cam) {
     LightingParams& lp = G.lighting;
     lp.lights.clear();
     // Time of day, the day's mood, the weather and any horde, all in one grade.
@@ -6452,7 +7445,7 @@ void sendSnapshot(int slot) {
         if (lengthSq(e.pos - at) > NET_RANGE * NET_RANGE && (e.type != EnemyType::Zombie || e.roamer)) continue;
         m.u32(e.netId);
         m.u8((uint8_t)e.type);
-        m.u8(e.type == EnemyType::Zombie ? (uint8_t)(e.zkind | (e.roamer ? 0x80 : 0)) : e.artVariant);
+        m.u8(e.type == EnemyType::Zombie ? (uint8_t)(e.zkind | (e.roamer ? 0x80 : 0) | (e.noAxe ? 0x40 : 0) | (e.takeT >= 0 ? 0x20 : 0)) : e.artVariant);
         uint8_t f = (e.hurtT > 0 ? 1 : 0) | (e.flashT > 0 ? 2 : 0) | (e.reloadT > 0 ? 4 : 0) |
                     (e.state == AIState::Alert ? 8 : 0) | (e.meleeCd > 0.35f ? 16 : 0);
         m.u8(f);
@@ -6510,7 +7503,12 @@ void readSnapshot(Net::Reader& r) {
         bool fresh = e.netId != id;
         e.netId = id;
         e.type = type;
-        if (type == EnemyType::Zombie) { e.zkind = variant & 3; e.artVariant = (uint8_t)(variant & 3); e.roamer = (variant & 0x80) != 0; }
+        if (type == EnemyType::Zombie) {
+            e.zkind = variant & 3; e.artVariant = (uint8_t)(variant & 3); e.roamer = (variant & 0x80) != 0;
+            e.noAxe = (variant & 0x40) != 0;
+            if ((variant & 0x20) && e.takeT < 0) e.takeT = 0.8f;
+            if (!(variant & 0x20)) e.takeT = -1;
+        }
         else e.artVariant = variant;
         e.home = pos;
         if (fresh) e.pos = e.lastPos = pos;
@@ -6763,6 +7761,9 @@ std::string raid_coopOffscreenHorde() {
         World::withCrypts = true;
         G.world.generate(seed, p.day);
         placeTurretsInWorld(G.world);
+    s_gateT.clear();
+    s_axes.clear();
+    s_casings.clear();
         G.enemies.clear();
         G.bullets.clear();
         s_worldLive = false;
@@ -6830,7 +7831,8 @@ void raid_bigText(const std::string& text, int color) { bigText(text, color, 4);
 
 void raid_netMessage(int slot, uint8_t type, Net::Reader& r) {
     using namespace Coop;
-    if (host()) {
+    // A local seat's own messages are read the way a guest reads them (0.12v).
+    if (host() && !s_localDeliver) {
         switch (type) {
         case M_WANT_FULL: sendWorldFull(slot); break;
         case M_SHOTS: {
@@ -6941,6 +7943,14 @@ void raid_netMessage(int slot, uint8_t type, Net::Reader& r) {
             }
             break;
         }
+        case M_MELEE_TILE: {
+            // A guest's melee on a wall, a fence or a tree: the ground is the host's to break.
+            int tx = r.u16(), ty = r.u16();
+            float dmg = std::min(r.f32(), 200.0f);
+            if (r.bad || !G.world.inBounds(tx, ty) || solidInfo(G.world.at(tx, ty).solid).hp <= 0) break;
+            if (G.world.damageTile(tx, ty, dmg)) addParticles(World::tileCenter(tx, ty), 10, solidInfo(S_WALL_WOOD).mapColor, 15, 90, 0.2f, 0.8f, false, 2);
+            break;
+        }
         case M_PVP_HIT: {
             int target = r.u8();
             float dmg = r.f32();
@@ -7012,7 +8022,7 @@ void raid_netMessage(int slot, uint8_t type, Net::Reader& r) {
         spawnBloodPool(pos);
         if (t == EnemyType::Zombie) {
             if (s_zCorpses.size() > 160) s_zCorpses.erase(s_zCorpses.begin());
-            s_zCorpses.push_back({pos, std::clamp(zkind, 0, 2), std::cos(angle) < 0, 0});
+            s_zCorpses.push_back({pos, std::clamp(zkind, 0, 2), std::cos(angle) < 0, 0, (int)(s_rng.next() & 1), false});
         }
         break;
     }
@@ -7202,12 +8212,12 @@ void drawNetPlayers(uint8_t where) {
     }
 }
 
-void drawNetPlayerTags(uint8_t where, Vec2 cam) {
+void drawNetPlayerTags(uint8_t where, Vec2 cam, bool includeSelf) {
     (void)cam;
     if (!Coop::active() || G.prof.rivals) return;   // Rivals: a stranger is a stranger
     for (int i = 0; i < Coop::MAX_PLAYERS; i++) {
         const Coop::NetPlayer& np = Coop::player(i);
-        if (i == mySlot() || !np.used || np.where != where) continue;
+        if ((i == mySlot() && !includeSelf) || !np.used || np.where != where) continue;
         if (where == Coop::W_RAID && np.ride >= 0) continue;   // the car carries their name
         int col = Coop::colorPal(i);
         R::textShadow(np.name, std::floor(np.pos.x - R::textWidth(np.name) / 2), np.pos.y - 26, pal(col));
@@ -7238,6 +8248,9 @@ std::string raid_missedHorde() {
     World::withCrypts = true;
     G.world.generate(todaySeed(), p.day);
     placeTurretsInWorld(G.world);
+    s_gateT.clear();
+    s_axes.clear();
+    s_casings.clear();
     G.enemies.clear();
     G.bullets.clear();
     G.nightFallen = false;
@@ -7253,4 +8266,67 @@ std::string raid_missedHorde() {
     G.enemies.clear();
     G.particles.clear();
     return s_hordeNote;
+}
+
+// ---- local co-op seats outside (0.12v) ------------------------------------------------
+// A seat's turn swaps its raid state with the globals (seat 0's lives there).
+void raid_swapSeat(int seat) {
+    RaidSeat& r = s_raidSeats[std::clamp(seat, 0, Local::MAX_SEATS - 1)];
+    std::swap(s_spikeCd, r.spikeCd);
+    std::swap(s_deathT, r.deathT);
+    std::swap(s_deathCause, r.deathCause);
+    std::swap(s_downT, r.downT);
+    std::swap(s_reviveT, r.reviveT);
+    std::swap(s_reviveSlot, r.reviveSlot);
+    std::swap(s_ride, r.ride);
+    std::swap(s_crashCd, r.crashCd);
+    std::swap(s_carMsgT, r.carMsgT);
+    std::swap(s_talkT, r.talkT);
+    std::swap(s_talkPage, r.talkPage);
+    std::swap(s_interOpts, r.interOpts);
+    std::swap(s_interSel, r.interSel);
+    std::swap(s_interSelKey, r.interSelKey);
+    std::swap(s_assistTarget, r.assistTarget);
+    std::swap(s_assistNet, r.assistNet);
+    std::swap(s_assistT, r.assistT);
+    std::swap(s_shopSel, r.shopSel);
+    std::swap(s_shopColor, r.shopColor);
+    std::swap(s_pvpAttacker, r.pvpAttacker);
+    std::swap(s_pvpAttackT, r.pvpAttackT);
+    std::swap(s_localOut, r.localOut);
+}
+
+// A player joined outside: out of the hatch with the others, beside whoever they joined.
+void raid_seatJoin(Vec2 near) {
+    seatStepOut(near);
+    spawnMyCar();
+}
+
+// That player drops out: their car goes back to the mechanic's with them.
+void raid_seatLeave() {
+    persistMyCar();
+    if (s_ride >= 0) leaveCar(false);
+    int me = mySlot();
+    s_cars.erase(std::remove_if(s_cars.begin(), s_cars.end(), [me](const Car& c) { return c.owner == me; }), s_cars.end());
+    closeLoot();
+    G.panel = Panel::None;
+    resetSeatRaidState();
+}
+
+// Bled out: waiting for the others to come home.
+bool raid_localOut() { return G.scene == Scene::Raid && s_localOut; }
+
+void raid_localEnded() {
+    for (RaidSeat& r : s_raidSeats) r = RaidSeat();
+    s_localOut = false;
+    R::setZoom(1);
+}
+
+float gateOpenness(int tx, int ty) { return gateOpenAt(tx, ty); }
+
+// --extract=SECONDS (dev): through the hatch, as if E had been pressed on it.
+void raid_devExtract() {
+    if (G.scene != Scene::Raid) return;
+    if (Local::active()) Local::atHome([] { localExtract(); });
+    else extract();
 }

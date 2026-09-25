@@ -38,6 +38,12 @@ static const SolidInfo SOLIDS[S_COUNT] = {
     {WHITE, -1, true, false, P_PURPLE,             0.0f},          // S_CRYPT_GATE: the last room's sealed way back (0.11v)
     {WHITE, -1, true, false, P_DARK,               0.0f},          // S_VOID: nothing, round an upper floor (0.11v)
     {WHITE, -1, false, false, P_TAN,               0.0f},          // S_STAIRS: a flight of stairs (0.11v)
+    // Barricades (0.12v): waist high, so bullets fly over them, but nothing walks through.
+    {WHITE, -1, false, false, P_ORANGE,            0.0f},          // S_BARRICADE
+    {WHITE, -1, false, false, P_ORANGE,            0.0f},          // S_GATE
+    {WHITE, -1, false, false, P_TAN,               0.0f, false},   // S_GATE_OPEN
+    {FENCE, 60, false, false, P_TAN,               0.0f},          // S_FENCE_GATE
+    {FENCE, -1, false, false, P_TAN,               0.0f, false},   // S_FENCE_GATE_OPEN
 };
 
 // What can stand in a building. FP_WALL pieces go against the back wall, FP_FREE ones
@@ -48,6 +54,8 @@ const FurnPiece FURN_PIECES[] = {
     {"plant_basket", 1, FP_WALL}, {"plant_grey", 1, FP_WALL}, {"floorlamp_a", 1, FP_WALL}, {"floorlamp_c", 1, FP_WALL},
     {"sofa_grey", 2, FP_FREE}, {"sofa_beige", 2, FP_FREE}, {"armchair_grey", 1, FP_FREE}, {"table_round", 1, FP_FREE},
     {"table_long", 2, FP_FREE}, {"rug_red", 2, FP_RUG}, {"rug_red_b", 2, FP_RUG}, {"rug_round", 2, FP_RUG},
+    // 0.12v
+    {"tv", 2, FP_WALL}, {"tablelamp", 1, FP_WALL}, {"mirror", 1, FP_WALL},
 };
 const int FURN_PIECE_COUNT = sizeof(FURN_PIECES) / sizeof(FURN_PIECES[0]);
 
@@ -58,7 +66,7 @@ float (*g_dynamicOverlap)(float x, float y, float r) = nullptr;
 
 static const int GROUND_MAP_COLOR[G_COUNT] = {
     P_LGREEN, P_TAN, P_CREAM, P_BLUE, P_BEIGE, P_TAN, P_TAN, P_BEIGE, P_MINT, P_LAVENDER, P_LAVENDER, P_PURPLE,
-    P_CREAM, P_DARK,
+    P_CREAM, P_DARK, P_TAN,
 };
 
 // ---------------------------------------------------------------- noise
@@ -91,6 +99,9 @@ float World::lootQuality(int tx, int ty) const {
     if (outsideSize(day) <= 240) q = d / (240 * 0.55f);
     else q = clampf(d / 132.0f, 0, 1) * 0.75f + clampf((d - 132.0f) / 100.0f, 0, 1) * 0.25f;
     q = clampf(q + day * 0.022f, 0, 1);
+    // However far you walk, the first days' loot stays modest (0.12v): 0.43 on day 1,
+    // 0.73 on day 5, the whole range by day 9.
+    q = std::min(q, 0.35f + 0.075f * day);
     if (cityAt(tx, ty) >= 0) q = std::min(1.3f, q + 0.25f);
     return q;
 }
@@ -131,12 +142,8 @@ float World::blockRadius(int tx, int ty) const {
 
 // Parked cars and wrecks stop you and bullets with their pixels, not their tiles: the
 // tiles only reserve the ground under them, and propAt says which prop is there.
-static bool pixelProp(uint8_t kind) { return kind == PROP_CAR || kind == PROP_WRECK; }
-static Art::Piece propArt(const WorldProp& p) {
-    if (p.kind == PROP_CAR) return Art::car(p.variant);
-    if (p.kind == PROP_WRECK) return Art::wreck(p.variant, p.frame);
-    return Art::Piece();
-}
+static bool pixelProp(uint8_t kind) { return kind == PROP_CAR || kind == PROP_WRECK || kind == PROP_OBJECT; }
+static Art::Piece propArt(const WorldProp& p) { return Art::propArt(p); }
 
 void World::indexProps() {
     propAt.assign(tiles.size(), -1);
@@ -375,6 +382,18 @@ void World::furnishBuildings(size_t from) {
             place(piece, x, y, false);
             wantRug--;
         }
+        // A painting on the back wall now and then (0.12v), over the furniture.
+        if (b.w >= 5 && r.chance(0.45f)) {
+            int x = r.irange(b.x0 + 1, b.x0 + b.w - 3);
+            if (at(x, b.y0).solid != S_NONE && at(x + 1, b.y0).solid != S_NONE && at(x, b.y0).solid != S_DOOR && at(x + 1, b.y0).solid != S_DOOR) {
+                WorldProp p;
+                p.kind = PROP_WALLDECO;
+                p.variant = Art::OB_PAINTING;
+                p.frame = Art::objectFrame(r.irange(0, 1), 0);
+                p.pos = Vec2((x + 1) * (float)TILE, (b.y0 + 1) * (float)TILE - 1);
+                props.push_back(p);
+            }
+        }
     }
 }
 
@@ -590,6 +609,36 @@ int World::addContainer(Vec2 pos, int kind, int tx, int ty, uint8_t variant) {
     return id;
 }
 
+bool World::placeStreetLight(int x, int y, int variant, bool flip) {
+    if (!inBounds(x, y) || at(x, y).solid != S_NONE) return false;
+    at(x, y).solid = S_POLE;
+    at(x, y).hp = -1;
+    at(x, y).worldDeco = 0;
+    WorldProp p;
+    p.kind = PROP_STREETLIGHT;
+    p.variant = (uint8_t)variant;
+    p.flipX = flip;
+    p.pos = Vec2(x * TILE + TILE * 0.5f, (y + 1) * (float)TILE);
+    // The pole is a narrow column at one edge of the side-arm art, and the art is drawn
+    // centred on p.pos. Shift it so the pole's foot lands in the middle of the tile that
+    // reserves it (and carries its collider).
+    Art::Piece art = Art::streetLight(p.variant);
+    if (art.valid()) {
+        const Assets::Sprite& s = *art.sprite;
+        int sum = 0, n = 0;
+        for (int px = 0; px < s.w; px++)
+            if (s.opaqueAt(art.frame, px, s.h - 1)) { sum += px; n++; }
+        if (n > 0) {
+            float poleX = sum / (float)n + 0.5f;           // from the art's left edge
+            bool flipped = art.flipX != p.flipX;
+            float fromCentre = (flipped ? s.w - poleX : poleX) - s.w * 0.5f;
+            p.pos.x -= fromCentre;
+        }
+    }
+    props.push_back(p);
+    return true;
+}
+
 // ---------------------------------------------------------------- generation
 namespace {
 
@@ -609,6 +658,7 @@ struct Gen {
     int day;
     int roadW = 2;             // road brush: 2 tiles, 3 from CITY_DAY (wider, clearer roads)
     bool cityBuild = false;    // placing a city's own buildings: its paving is not in the way
+    uint8_t bkind = BK_CABIN;  // what the next building() is (0.12v)
     std::vector<FloorPlan> floorPlans;
 
     void setSolid(int x, int y, int s) {
@@ -740,8 +790,13 @@ struct Gen {
             int dx, dy, ox = 0, oy = 0;
             if (side < 2) { dx = rng.irange(x0 + 1, x0 + bw - 3); dy = side == 0 ? y0 : y0 + bh - 1; ox = 1; }
             else { dy = rng.irange(y0 + 1, y0 + bh - 3); dx = side == 2 ? x0 : x0 + bw - 1; oy = 1; }
+            // Its style (0.12v, see Art::doorStyle): metal on sheds and army huts, the
+            // plain beige ones on some town and city fronts, wood elsewhere.
+            int style = bkind == BK_WAREHOUSE || bkind == BK_MILITARY ? 4
+                      : (bkind == BK_CITY || bkind == BK_TOWN) && rng.chance(0.4f) ? 3 : rng.irange(0, 1);
             for (int k = 0; k < 2; k++) {
                 setSolid(dx + ox * k, dy + oy * k, S_DOOR);
+                W.at(dx + ox * k, dy + oy * k).variant = (uint8_t)style;
                 doors.push_back({dx + ox * k, dy + oy * k});
                 outerDoors.push_back({dx + ox * k, dy + oy * k});
             }
@@ -753,6 +808,7 @@ struct Gen {
             for (int y = y0 + 1; y < y0 + bh - 1; y++)
                 if (y != gap && y != gap + 1) setSolid(px, y, wall);
             setSolid(px, gap, S_DOOR); setSolid(px, gap + 1, S_DOOR);
+            W.at(px, gap).variant = W.at(px, gap + 1).variant = 2;   // indoors: the white ones
             doors.push_back({px, gap}); doors.push_back({px, gap + 1});
         } else if (bh >= 11 && rng.chance(0.7f)) {
             int py = y0 + bh / 2 + rng.irange(-1, 1);
@@ -760,6 +816,7 @@ struct Gen {
             for (int x = x0 + 1; x < x0 + bw - 1; x++)
                 if (x != gap && x != gap + 1) setSolid(x, py, wall);
             setSolid(gap, py, S_DOOR); setSolid(gap + 1, py, S_DOOR);
+            W.at(gap, py).variant = W.at(gap + 1, py).variant = 2;
             doors.push_back({gap, py}); doors.push_back({gap + 1, py});
         }
         // A city building with floors above (0.11v): a flight of stairs against the
@@ -815,6 +872,9 @@ struct Gen {
         b.w = bw;
         b.h = bh;
         b.style = (uint8_t)(buildingStyle & 1);  // roof sheet has two matching styles
+        b.sheet = buildingStyle;                  // and the facade sheet it was built from
+        b.kind = bkind;
+        b.flatRoof = bkind == BK_CITY;
         b.walls = standing;
         for (auto& d : outerDoors) {
             if (b.doorCount >= Building::MAX_DOORS) break;
@@ -828,6 +888,7 @@ struct Gen {
     }
 
     void town(int cx, int cy) {
+        bkind = BK_TOWN;
         int n = rng.irange(3, 6);
         for (int i = 0; i < n; i++) {
             int bw = rng.irange(7, 12), bh = rng.irange(6, 10);
@@ -843,6 +904,7 @@ struct Gen {
     }
 
     void warehouse(int cx, int cy) {
+        bkind = BK_WAREHOUSE;
         int bw = rng.irange(14, 20), bh = rng.irange(10, 14);
         building(cx - bw / 2, cy - bh / 2, bw, bh, S_WALL_CONCRETE, G_FLOOR_CONCRETE, LootKind::Crate, 4, 7, 0.03f);
         for (int i = 0; i < 12; i++) {
@@ -855,6 +917,7 @@ struct Gen {
     }
 
     void military(int cx, int cy) {
+        bkind = BK_MILITARY;
         int r = rng.irange(9, 12);
         clearArea(cx - r, cy - r, r * 2 + 1, r * 2 + 1, G_DIRT);
         for (int y = cy - r; y <= cy + r; y++)
@@ -874,6 +937,7 @@ struct Gen {
     }
 
     void farm(int cx, int cy) {
+        bkind = BK_FARM;
         int fw = rng.irange(16, 22), fh = rng.irange(12, 18);
         clearArea(cx - fw / 2, cy - fh / 2, fw, fh, G_DIRT);
         for (int x = cx - fw / 2; x < cx + fw / 2; x++) {
@@ -917,25 +981,34 @@ struct Gen {
         return true;
     }
 
-    void streetLight(int x, int y, int variant, bool flip) {
-        if (!W.inBounds(x, y) || W.at(x, y).solid != S_NONE) return;
-        W.at(x, y).solid = S_POLE;
-        W.at(x, y).hp = -1;
-        W.at(x, y).worldDeco = 0;
-        WorldProp p;
-        p.kind = PROP_STREETLIGHT;
-        p.variant = (uint8_t)variant;
-        p.flipX = flip;
-        p.pos = Vec2(x * TILE + TILE * 0.5f, (y + 1) * (float)TILE);
-        W.props.push_back(p);
-    }
+    void streetLight(int x, int y, int variant, bool flip) { W.placeStreetLight(x, y, variant, flip); }
 
     // A grid of streets (four lanes of asphalt) round blocks of paved ground; most
     // blocks hold buildings, some two or three floors high, the rest are car parks,
     // squares or ruins. Gangs hold the buildings and walk the streets.
     void city(int cx0, int cy0, int cw, int ch) {
         const int STREET = 4;
-        W.cities.push_back(CityZone{cx0, cy0, cw, ch});
+        CityZone zone;
+        zone.x0 = cx0; zone.y0 = cy0; zone.w = cw; zone.h = ch;
+        zone.street = STREET;
+        // Some cities are kept, some the grass has half taken back (0.12v).
+        zone.overgrowth = (hash2(cx0, cy0, (uint32_t)W.seed ^ 0x06E7u) & 0xFFFF) / 65535.0f;
+        W.cities.push_back(zone);
+        bkind = BK_CITY;
+        // The outskirts (0.12v): a ragged belt of dead scrub round the city, thinned of
+        // trees, so the country does not stop dead at the first kerb.
+        for (int y = cy0 - 16; y < cy0 + ch + 16; y++)
+            for (int x = cx0 - 16; x < cx0 + cw + 16; x++) {
+                if (!W.inBounds(x, y) || (x >= cx0 && y >= cy0 && x < cx0 + cw && y < cy0 + ch)) continue;
+                int dx = std::max({cx0 - x, x - (cx0 + cw - 1), 0}), dy = std::max({cy0 - y, y - (cy0 + ch - 1), 0});
+                float d = std::sqrt(float(dx * dx + dy * dy));
+                float reach = 7 + 9 * fbm(x * 0.11f, y * 0.11f, (uint32_t)W.seed ^ 0xB1EAu);
+                if (d > reach) continue;
+                Tile& t = W.at(x, y);
+                if (t.solid == S_BOUNDARY || reserved(x, y)) continue;
+                if (t.ground == G_GRASS || t.ground == G_SAND) t.ground = G_WASTE;
+                if ((t.solid == S_TREE || t.solid == S_BUSH) && (hash2(x, y, 0x7E3Du) & 3) != 0) { t.solid = S_NONE; t.hp = 0; }
+            }
         // Everything the countryside put here goes: paving over all of it.
         for (int y = cy0; y < cy0 + ch; y++)
             for (int x = cx0; x < cx0 + cw; x++) {
@@ -965,6 +1038,8 @@ struct Gen {
             y += STREET + bh;
         }
         if (ys.back() + STREET < cy0 + ch) ys.push_back(cy0 + ch - STREET);
+        W.cities.back().streetX = xs;
+        W.cities.back().streetY = ys;
         auto asphalt = [&](int x, int y) {
             if (!W.inBounds(x, y)) return;
             Tile& t = W.at(x, y);
@@ -1037,10 +1112,24 @@ struct Gen {
     }
 
     void cityBlock(int x0, int y0, int bw, int bh) {
+        CityBlock blk;
+        blk.x0 = x0; blk.y0 = y0; blk.w = bw; blk.h = bh;
+        blk.city = (int)W.cities.size() - 1;
         float r = rng.f();
-        // A ring of pavement round every block: the sidewalk.
-        int ix = x0 + 1, iy = y0 + 1, iw = bw - 2, ih = bh - 2;
-        if (r < 0.62f) {
+        // A sidewalk two tiles wide round every block (0.12v), kerbed against the street.
+        const int SW = 2;
+        int ix = x0 + SW, iy = y0 + SW, iw = bw - 2 * SW, ih = bh - 2 * SW;
+        auto inner = [&](int x, int y) { return x >= ix && y >= iy && x < ix + iw && y < iy + ih; };
+        // Grass on the block: a kerbed lawn, or wild grass that took the paving back.
+        auto green = [&](int x, int y, bool kerb) {
+            Tile& t = W.at(x, y);
+            if (t.solid != S_NONE && t.solid != S_TREE && t.solid != S_BUSH) return;
+            t.ground = G_GRASS;
+            t.flags = kerb ? (uint8_t)(t.flags | TF_KERB) : (uint8_t)(t.flags & ~TF_KERB);
+        };
+        if (r < 0.56f) {
+            blk.kind = BLK_BUILDINGS;
+            size_t firstB = W.buildings.size();
             // Buildings: one big one, or two or three side by side.
             int n = iw >= 30 ? rng.irange(1, 3) : iw >= 18 ? rng.irange(1, 2) : 1;
             int slot = iw / n;
@@ -1048,8 +1137,8 @@ struct Gen {
                 int w = std::min(slot - 2, rng.irange(9, 16));
                 int h = std::min(ih - 2, rng.irange(8, 13));
                 if (w < 7 || h < 7) continue;
-                int x = ix + i * slot + rng.irange(0, std::max(0, slot - w - 1));
-                int y = iy + rng.irange(0, std::max(0, ih - h - 1));
+                int x = ix + 1 + i * slot + rng.irange(0, std::max(0, slot - w - 2));
+                int y = iy + 1 + rng.irange(0, std::max(0, ih - h - 2));
                 int upper = w >= 9 && h >= 8 ? (rng.chance(0.55f) ? rng.irange(1, 2) : 0) : 0;
                 float ruin = rng.chance(0.25f) ? 0.07f : 0.0f;
                 int wall = ruin > 0 ? S_WALL_BRICK : (rng.chance(0.7f) ? S_WALL_CONCRETE : S_WALL_WOOD);
@@ -1058,7 +1147,41 @@ struct Gen {
                 if (building(x, y, w, h, wall, floor, k, 2, 4, ruin, upper))
                     spawnGroup(x + w / 2, y + h / 2, rng.irange(2, 4), std::max(3, std::min(w, h) / 2 - 1), rng.chance(0.3f));
             }
-        } else if (r < 0.77f) {
+            // What is left of the block round them: lawns, wild grass, or paving. A
+            // paved apron stays round each building and a path runs from every door
+            // out to the sidewalk.
+            float yr = rng.f();
+            blk.yard = yr < 0.45f ? 1 : yr < 0.75f ? 2 : 0;
+            if (blk.yard) {
+                auto apron = [&](int x, int y) {
+                    for (size_t bi = firstB; bi < W.buildings.size(); bi++) {
+                        const Building& b = W.buildings[bi];
+                        if (x >= b.x0 - 1 && y >= b.y0 - 1 && x <= b.x0 + b.w && y <= b.y0 + b.h) return true;
+                    }
+                    return false;
+                };
+                for (int y = iy; y < iy + ih; y++)
+                    for (int x = ix; x < ix + iw; x++)
+                        if (!apron(x, y) && W.at(x, y).ground == G_PAVEMENT) green(x, y, blk.yard == 1);
+                for (size_t bi = firstB; bi < W.buildings.size(); bi++) {
+                    const Building& b = W.buildings[bi];
+                    for (int d = 0; d < b.doorCount; d++) {
+                        int dx = b.doorX[d], dy = b.doorY[d];
+                        int sx = dx == b.x0 ? -1 : dx == b.x0 + b.w - 1 ? 1 : 0;
+                        int sy = dy == b.y0 ? -1 : dy == b.y0 + b.h - 1 ? 1 : 0;
+                        if (sx && sy) sy = 0;
+                        for (int x = dx + sx, y = dy + sy; inner(x, y); x += sx, y += sy) {
+                            Tile& t = W.at(x, y);
+                            if (t.ground != G_GRASS) { if (t.ground == G_PAVEMENT) continue; break; }
+                            t.ground = G_PAVEMENT;
+                            t.flags &= (uint8_t)~TF_KERB;
+                            if (t.solid == S_TREE || t.solid == S_BUSH) { t.solid = S_NONE; t.hp = 0; }
+                        }
+                    }
+                }
+            }
+        } else if (r < 0.68f) {
+            blk.kind = BLK_PARKING;
             // A car park: asphalt with the dead cars still in their bays.
             for (int y = iy; y < iy + ih; y++)
                 for (int x = ix; x < ix + iw; x++) W.at(x, y).ground = G_ROAD;
@@ -1070,17 +1193,47 @@ struct Gen {
                 if (W.at(x, y).solid == S_NONE) placeContainer(x, y, qualityAt(x, y), rng.chance(0.4f) ? LootKind::Toolbox : LootKind::Bag);
             }
             spawnGroup(ix + iw / 2, iy + ih / 2, rng.irange(1, 3), std::min(iw, ih) / 2, false, false);
-        } else if (r < 0.87f) {
-            // A square: trees and shrubs, a few lamps.
-            for (int i = 0; i < iw * ih / 30; i++) {
-                int x = rng.irange(ix + 1, ix + iw - 2), y = rng.irange(iy + 1, iy + ih - 2);
-                if (W.at(x, y).solid == S_NONE) setSolid(x, y, rng.chance(0.7f) ? S_TREE : S_BUSH);
-            }
-            for (int i = 0; i < 3; i++) streetLight(rng.irange(ix + 1, ix + iw - 2), rng.irange(iy + 1, iy + ih - 2), 1, false);
-        } else {
-            // What is left of a block: rubble, broken walls, crates and a gang's camp.
+        } else if (r < 0.82f) {
+            blk.kind = BLK_PARK;
+            // A park: lawns (kept or run wild) crossed by paved paths, with trees and
+            // shrubs; the dressing adds its benches and lamps.
+            bool kept = rng.chance(0.65f);
+            blk.yard = kept ? 1 : 2;
+            int px = ix + iw / 2 - 1 + rng.irange(-2, 2), py = iy + ih / 2 - 1 + rng.irange(-2, 2);
             for (int y = iy; y < iy + ih; y++)
-                for (int x = ix; x < ix + iw; x++) if (rng.chance(0.6f)) W.at(x, y).ground = G_RUBBLE;
+                for (int x = ix; x < ix + iw; x++) {
+                    bool path = (x >= px && x <= px + 1) || (y >= py && y <= py + 1);
+                    if (!path) green(x, y, kept);
+                }
+            // A kept park is often railed in wrought iron (0.12v), open where the paths run out.
+            if (kept && rng.chance(0.7f))
+                for (int y = iy; y < iy + ih; y++)
+                    for (int x = ix; x < ix + iw; x++) {
+                        bool edge = x == ix || y == iy || x == ix + iw - 1 || y == iy + ih - 1;
+                        bool path = (x >= px && x <= px + 1) || (y >= py && y <= py + 1);
+                        if (!edge || path || W.at(x, y).solid != S_NONE) continue;
+                        setSolid(x, y, S_FENCE);
+                        W.at(x, y).flags |= TF_IRON;
+                    }
+            int want = iw * ih / (kept ? 16 : 9);
+            for (int i = 0; i < want; i++) {
+                int x = rng.irange(ix, ix + iw - 1), y = rng.irange(iy, iy + ih - 1);
+                const Tile& t = W.at(x, y);
+                if (t.ground != G_GRASS || t.solid != S_NONE) continue;
+                // Keep a tile of lawn clear along the paths, for the benches.
+                if (std::abs(x - px) <= 2 || std::abs(x - px - 1) <= 2 || std::abs(y - py) <= 2 || std::abs(y - py - 1) <= 2) continue;
+                setSolid(x, y, rng.chance(0.7f) ? S_TREE : S_BUSH);
+            }
+        } else if (r < 0.92f) {
+            blk.kind = BLK_RUIN;
+            // What is left of a block: rubble, broken walls, crates and a gang's camp,
+            // with the scrub coming through.
+            for (int y = iy; y < iy + ih; y++)
+                for (int x = ix; x < ix + iw; x++) {
+                    float n = fbm(x * 0.21f, y * 0.21f, (uint32_t)W.seed ^ 0x5C4Bu);
+                    if (n > 0.58f) W.at(x, y).ground = G_WASTE;
+                    else if (rng.chance(0.6f)) W.at(x, y).ground = G_RUBBLE;
+                }
             for (int i = 0; i < 4; i++) {
                 int x = rng.irange(ix + 1, ix + iw - 4), y = rng.irange(iy + 1, iy + ih - 2);
                 int len = rng.irange(2, 5);
@@ -1099,7 +1252,33 @@ struct Gen {
                 if (W.at(x, y).solid == S_NONE) placeContainer(x, y, qualityAt(x, y) + 0.1f, LootKind::Military);
             }
             spawnGroup(ix + iw / 2, iy + ih / 2, rng.irange(3, 5), std::min(iw, ih) / 2, true);
+        } else {
+            blk.kind = BLK_DEPOT;
+            // A depot: a fenced yard of bare earth and asphalt where the shipping
+            // containers were left (the dressing stacks them), a gate on one side.
+            for (int y = iy; y < iy + ih; y++)
+                for (int x = ix; x < ix + iw; x++)
+                    W.at(x, y).ground = fbm(x * 0.17f, y * 0.17f, (uint32_t)W.seed ^ 0xDE90u) > 0.55f ? G_DIRT : G_ROAD;
+            int gateSide = rng.irange(0, 3), gate = gateSide < 2 ? ix + iw / 2 - 1 : iy + ih / 2 - 1;
+            for (int y = iy; y < iy + ih; y++)
+                for (int x = ix; x < ix + iw; x++) {
+                    int side = y == iy ? 0 : y == iy + ih - 1 ? 1 : x == ix ? 2 : x == ix + iw - 1 ? 3 : -1;
+                    if (side < 0) continue;
+                    int along = side < 2 ? x : y;
+                    // The way in (0.12v): wire gates when it is in a side that runs across.
+                    if (side == gateSide && along >= gate && along <= gate + 2) {
+                        if (side < 2) { setSolid(x, y, S_FENCE_GATE); W.at(x, y).variant = along == gate + 1 ? 1 : 0; }
+                        continue;
+                    }
+                    setSolid(x, y, S_FENCE);
+                }
+            for (int i = 0; i < 3; i++) {
+                int x = rng.irange(ix + 2, ix + iw - 3), y = rng.irange(iy + 2, iy + ih - 3);
+                if (W.at(x, y).solid == S_NONE) placeContainer(x, y, qualityAt(x, y) + 0.05f, rng.chance(0.5f) ? LootKind::Crate : LootKind::Toolbox);
+            }
+            spawnGroup(ix + iw / 2, iy + ih / 2, rng.irange(2, 4), std::min(iw, ih) / 2 - 1);
         }
+        W.blocks.push_back(blk);
     }
 
     // The mechanic's yard, just east of the bunker compound: a paved lot, his open
@@ -1129,6 +1308,8 @@ struct Gen {
         Building b;
         b.x0 = x0; b.y0 = y0; b.w = w; b.h = h;
         b.style = (uint8_t)(style & 1);
+        b.sheet = style;
+        b.kind = BK_GARAGE;
         for (int x = x0 + 2; x <= x0 + w - 3 && b.doorCount < Building::MAX_DOORS; x++) {
             b.doorX[b.doorCount] = (int16_t)x;
             b.doorY[b.doorCount] = (int16_t)(y0 + h - 1);
@@ -1199,7 +1380,7 @@ void cryptLoot(World& W, Rng& rng, int id, int n, bool rich) {
         if (hasTier(it) && !itemDef(it.id).elite) {
             // Down here guns come in better: epic and rare far more often, and now and
             // then an elite one.
-            if (rich && eliteOf(it.id) != IT_NONE && rng.chance(0.18f)) it = makeItem(eliteOf(it.id));
+            if (rich && eliteOf(it.id) != IT_NONE && rng.chance(0.18f * eliteGate())) it = makeItem(eliteOf(it.id));
             else it.tier = (int8_t)rollWeaponTier(rng, rich ? 2.0f : 1.6f);
         }
         addToSlots(c.items, it);
@@ -1603,6 +1784,8 @@ void buildFloors(World& W, Rng& rng, const std::vector<FloorPlan>& plans, int da
             Building b;
             b.x0 = fx; b.y0 = fy; b.w = below.w; b.h = below.h;
             b.style = below.style;
+            b.sheet = below.sheet;
+            b.kind = BK_FLOOR;
             b.walls = 2 * (below.w + below.h) - 4;
             W.buildings.push_back(b);
             if (nextX < 0) break;
@@ -1674,7 +1857,7 @@ static void generateBelow(World& W, uint64_t seed, int day, const std::vector<Fl
             for (int y = ty - 5; y <= ty + 4 && ok; y++)
                 for (int x = tx - 5; x <= tx + 4 && ok; x++) {
                     const Tile& t = W.at(x, y);
-                    if (t.ground == G_WATER || t.ground == G_ROAD || t.ground == G_BRIDGE || t.ground >= G_FLOOR_WOOD ||
+                    if (t.ground == G_WATER || t.ground == G_ROAD || t.ground == G_BRIDGE || (t.ground >= G_FLOOR_WOOD && t.ground != G_WASTE) ||
                         t.solid == S_CONTAINER || t.solid == S_BUNKER || t.solid == S_BOUNDARY || t.solid == S_CAR ||
                         t.solid == S_POLE || t.solid == S_DOOR || t.solid == S_WALL_BRICK || t.solid == S_WALL_CONCRETE ||
                         t.solid == S_WALL_WOOD)
@@ -1693,7 +1876,7 @@ static void generateBelow(World& W, uint64_t seed, int day, const std::vector<Fl
                     t.solid = S_NONE; t.worldDeco = 0; t.deco = 0;
                     // Trodden earth in an oval round it.
                     float ex = (x - tx + 0.5f) / 4.6f, ey = (y - ty - 1.0f) / 3.6f;
-                    if (ex * ex + ey * ey < 1.0f && (t.ground == G_GRASS || t.ground == G_SAND)) t.ground = G_DIRT;
+                    if (ex * ex + ey * ey < 1.0f && (t.ground == G_GRASS || t.ground == G_SAND || t.ground == G_WASTE)) t.ground = G_DIRT;
                 }
             for (int y = ty - 2; y <= ty; y++)
                 for (int x = tx - 2; x <= tx + 1; x++) { Tile& t = W.at(x, y); t.solid = S_CRYPT_PROP; t.hp = -1; }
@@ -1720,6 +1903,7 @@ static void generateBelow(World& W, uint64_t seed, int day, const std::vector<Fl
 void World::generate(uint64_t seedIn, int day) {
     seed = seedIn;
     this->day = day;
+    setLootDay(day);
     Rng rng(seed);
     // From day 5 the outside is five times the size, with cities round its edge.
     w = h = outsideSize(day);
@@ -1732,6 +1916,8 @@ void World::generate(uint64_t seedIn, int day) {
     spawns.clear();
     buildings.clear();
     cities.clear();
+    blocks.clear();
+    roofProps.clear();
     floors.clear();
     stairs.clear();
     patrols.clear();
@@ -1757,12 +1943,21 @@ void World::generate(uint64_t seedIn, int day) {
             t.variant = (uint8_t)(hash2(x, y, s3) & 255);
             // Grass is the default ground; bare earth and the drier scrub are the
             // minority, so the world does not read as one brown mass.
+            // Dead scrub (0.12v) in patches of its own, off the home ground: its own
+            // noise, so the dice below are rolled as before.
+            float dead = fbm(x * 0.022f, y * 0.022f, s1 ^ 0xDEADu);
             if (e < waterLevel * 0.55f) t.ground = G_DIRT;    // worn hollows
+            else if (dead > 0.64f && dh > 30) t.ground = G_WASTE;
             else if (m < desert) t.ground = G_SAND;           // drier scrub
             else t.ground = G_GRASS;
 
-            if (t.ground == G_GRASS && rng.chance(0.03f)) t.worldDeco = (uint8_t)rng.irange(1, 255);
-            else if (t.ground == G_DIRT && rng.chance(0.05f)) t.worldDeco = (uint8_t)rng.irange(1, 255);
+            if (t.ground == G_GRASS && rng.chance(0.03f)) t.worldDeco = Art::decoCode(Art::DK_TUFT, rng.irange(1, 255));
+            else if (t.ground == G_DIRT && rng.chance(0.05f)) {
+                int r = rng.irange(1, 255);
+                t.worldDeco = Art::decoCode(r % 3 ? Art::DK_PEBBLE : Art::DK_FOREST, r / 3);
+            }
+            // The scrub keeps a few dead trees.
+            if (t.ground == G_WASTE && hash2(x, y, s2 ^ 0x77u) % 90 == 0) g.setSolid(x, y, S_TREE);
             if (t.ground == G_GRASS && m > forestiness && rng.chance((m - forestiness) * 2.2f)) g.setSolid(x, y, S_TREE);
             else if (t.ground == G_GRASS && rng.chance(0.012f)) g.setSolid(x, y, S_TREE);
             else if (t.ground != G_SAND && rng.chance(0.01f)) g.setSolid(x, y, S_BUSH);
@@ -1794,6 +1989,11 @@ void World::generate(uint64_t seedIn, int day) {
             g.setSolid(homeTx + i, homeTy + 9, S_FENCE);
             g.setSolid(homeTx - 9, homeTy + i, S_FENCE);
             g.setSolid(homeTx + 9, homeTy + i, S_FENCE);
+        } else {
+            // The back of the compound has wire gates (0.12v): they open for you and
+            // your people, and the dead have to tear them down. The middle one is locked.
+            g.setSolid(homeTx + i, homeTy - 9, S_FENCE_GATE);
+            at(homeTx + i, homeTy - 9).variant = i == 0 ? 1 : 0;
         }
     }
 
@@ -1884,10 +2084,12 @@ void World::generate(uint64_t seedIn, int day) {
         std::vector<uint8_t> shoulder(tiles.size(), 0);
         for (int y = 1; y < h - 1; y++)
             for (int x = 1; x < w - 1; x++) {
-                if (at(x, y).ground != G_ROAD) continue;
+                if (at(x, y).ground != G_ROAD || cityAt(x, y) >= 0) continue;   // a city's streets have kerbs
                 for (int oy = -1; oy <= 1; oy++)
                     for (int ox = -1; ox <= 1; ox++)
-                        if (at(x + ox, y + oy).ground == G_GRASS) shoulder[(y + oy) * w + (x + ox)] = 1;
+                        if ((at(x + ox, y + oy).ground == G_GRASS || at(x + ox, y + oy).ground == G_WASTE) &&
+                            !(at(x + ox, y + oy).flags & TF_KERB) && cityAt(x + ox, y + oy) < 0)
+                            shoulder[(y + oy) * w + (x + ox)] = 1;
             }
         for (size_t i = 0; i < tiles.size(); i++)
             if (shoulder[i]) tiles[i].ground = G_DIRT;
@@ -1903,6 +2105,7 @@ void World::generate(uint64_t seedIn, int day) {
     }
 
     // Scattered cabins and sheds.
+    g.bkind = BK_CABIN;
     for (int i = 0; i < (int)(22 * more); i++) {
         int bw = rng.irange(5, 8), bh = rng.irange(5, 7);
         int x = rng.irange(8, w - 16), y = rng.irange(8, h - 16);
@@ -1970,36 +2173,12 @@ void World::generate(uint64_t seedIn, int day) {
                 if (!inBounds(vx, vy)) continue;
                 const Tile& verge = at(vx, vy);
                 if (verge.solid != S_NONE || verge.deco || blocksMove(vx, vy)) continue;   // clear ground only
-                if (verge.ground != G_GRASS && verge.ground != G_DIRT && verge.ground != G_SAND) continue;
+                if (verge.ground != G_GRASS && verge.ground != G_DIRT && verge.ground != G_SAND && verge.ground != G_WASTE) continue;
                 int hx = vx - homeTx, hy = vy - homeTy;
                 if (hx * hx + hy * hy < 14 * 14) continue;
-                at(vx, vy).solid = S_POLE;
-                at(vx, vy).hp = -1;
-                at(vx, vy).worldDeco = 0;
-                WorldProp p;
-                p.kind = PROP_STREETLIGHT;
                 // Variants: 0 arm to the right, 1 arm up, 2 arm down. The arm has to
                 // point back the way we came, since that is where the road is.
-                p.flipX = dir == 2;
-                p.variant = dir == 0 ? 2 : (dir == 1 ? 1 : 0);
-                p.pos = Vec2(vx * TILE + TILE * 0.5f, (vy + 1) * (float)TILE);
-                // The pole is a narrow column at one edge of the side-arm art, and the
-                // art is drawn centred on p.pos. Shift it so the pole's foot lands in
-                // the middle of the tile that reserves it (and carries its collider).
-                Art::Piece art = Art::streetLight(p.variant);
-                if (art.valid()) {
-                    const Assets::Sprite& s = *art.sprite;
-                    int sum = 0, n = 0;
-                    for (int px = 0; px < s.w; px++)
-                        if (s.opaqueAt(art.frame, px, s.h - 1)) { sum += px; n++; }
-                    if (n > 0) {
-                        float poleX = sum / (float)n + 0.5f;           // from the art's left edge
-                        bool flip = art.flipX != p.flipX;
-                        float fromCentre = (flip ? s.w - poleX : poleX) - s.w * 0.5f;
-                        p.pos.x -= fromCentre;
-                    }
-                }
-                props.push_back(p);
+                placeStreetLight(vx, vy, dir == 0 ? 2 : (dir == 1 ? 1 : 0), dir == 2);
                 break;
             }
         }
@@ -2038,6 +2217,7 @@ void World::generate(uint64_t seedIn, int day) {
         b.y0 = homeTy - 3;
         b.w = b.h = 7;
         b.style = 0;
+        b.kind = BK_BUNKER;
         for (int y = b.y0; y < b.y0 + b.h; y++)
             for (int x = b.x0; x < b.x0 + b.w; x++)
                 if ((x == b.x0 || y == b.y0 || x == b.x0 + b.w - 1 || y == b.y0 + b.h - 1) && at(x, y).solid != S_NONE) b.walls++;
@@ -2091,6 +2271,7 @@ void World::generate(uint64_t seedIn, int day) {
         spawns = std::move(packs);
     }
 
+    dressWorld(*this, seed);
     indexProps();
     rebuildMap();
     std::fprintf(stderr, "[world] day %d: %dx%d, %zu cities, %zu floors, %zu spawns, %zu containers, %zu props\n", day, outW, outH,
@@ -2110,6 +2291,8 @@ void World::generateBase() {
     spawns.clear();
     buildings.clear();
     cities.clear();
+    blocks.clear();
+    roofProps.clear();
     floors.clear();
     stairs.clear();
     patrols.clear();

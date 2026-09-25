@@ -48,6 +48,8 @@ static const ItemDef DEFS[IT_COUNT] = {
     {"M15", Cat::Weapon, 800, 1, I_CARBINE, 0, 3, "Precise semi-auto rifle, quick follow-up shots. 5.56.", true},
     {"AK-47", Cat::Weapon, 950, 1, I_RIFLE, 0, 3, "Heavy-hitting automatic rifle. 5.56.", true},
     {"M24", Cat::Weapon, 1400, 1, I_SNIPER, 0, 3, "Bolt-action marksman rifle. Pinpoint, devastating. .338.", true},
+    {"Baseball Bat", Cat::Melee, 30, 1, I_SCRAP, 42, 1, "Put it in your melee slot and [F] swings it: harder, further, a harder knock-back, and it breaks through walls, fences and trees."},
+    {"Canned Soup", Cat::Valuable, 14, 10, I_FOOD, 0, 0, "Tomato, by the smell. Trade good."},
 };
 
 //                        ammo            dmg   rate  mag  reload spread pel speed range auto   expl   tile  shake sound
@@ -188,11 +190,24 @@ float laserLength(int tier) {
     }
 }
 
+static int g_lootDay = 99;
+void setLootDay(int day) { g_lootDay = std::max(1, day); }
+int lootDay() { return g_lootDay; }
+float eliteGate() { return clampf((g_lootDay - 3) / 5.0f, 0, 1); }
+
 int rollWeaponTier(Rng& rng, float q) {
     // 0..1 is the outside world; the catacombs go up to 2, where epic and rare guns
     // are common and plain ones rare.
     q = clampf(q, 0, 2);
-    float epic = 0.04f + 0.08f * q, rare = 0.14f + 0.14f * q, common = std::max(0.02f, 0.36f - 0.20f * q);
+    // The days gate it (0.12v): on day 1 even the best spot rolls like a middling
+    // one, epics only start on day 3 and reach their full odds around day 8, and rare
+    // guns are scarce at first. Roughly: day 1 no epics, ~6% rare; day 3 ~2% epic,
+    // ~12% rare; day 5 ~6% / 18%; day 8+ as before.
+    float prog = clampf((g_lootDay - 1) / 9.0f, 0, 1);
+    q = std::min(q, 0.3f + 1.7f * prog);
+    float epicGate = clampf((g_lootDay - 2) / 6.0f, 0, 1);
+    float rareGate = 0.35f + 0.65f * prog;
+    float epic = (0.04f + 0.08f * q) * epicGate, rare = (0.14f + 0.14f * q) * rareGate, common = std::max(0.02f, 0.36f - 0.20f * q);
     float r = rng.f();
     if (r < epic) return TIER_EPIC;
     if (r < epic + rare) return TIER_RARE;
@@ -285,16 +300,16 @@ Item rollLoot(Rng& rng, float q, LootKind kind) {
         if (kind == LootKind::Toolbox) id = pickByRarity(rng, q, {IT_SCRAP, IT_WIRES, IT_BOLTS, IT_TAPE, IT_GUNPARTS, IT_BATTERY});
         else if (kind == LootKind::Military) id = pickByRarity(rng, q, {IT_BATTERY, IT_CIRCUIT, IT_GUNPARTS, IT_INTEL});
         else id = pickByRarity(rng, q, {IT_SCRAP, IT_WIRES, IT_BOLTS, IT_TAPE, IT_BATTERY, IT_CIRCUIT, IT_WATCH, IT_GPU,
-                                       IT_JEWELRY, IT_FOOD, IT_MEDSUP, IT_FUEL, IT_GUNPARTS, IT_INTEL});
+                                       IT_JEWELRY, IT_FOOD, IT_SOUP, IT_MEDSUP, IT_FUEL, IT_GUNPARTS, IT_INTEL, IT_BAT});
         break;
     case 1: id = pickByRarity(rng, q, {IT_BANDAGE, IT_MEDKIT}); break;
     case 2: id = pickByRarity(rng, q, {IT_AMMO_LIGHT, IT_AMMO_SHELL, IT_AMMO_RIFLE, IT_AMMO_SNIPER, IT_ROCKET}); break;
     case 3: {
         id = pickByRarity(rng, q, {IT_PISTOL, IT_SMG, IT_SHOTGUN, IT_RIFLE, IT_SNIPER, IT_LAUNCHER});
         // Now and then it is an elite gun instead: about 4% of guns found, a little more
-        // in better loot. Pistols can turn into any of the three elite handguns and
+        // in better loot, from day 4 on (eliteGate). Pistols can turn into any of the three elite handguns and
         // rifles into either elite rifle.
-        if (eliteOf(id) != IT_NONE && rng.chance(0.03f + 0.03f * q)) {
+        if (eliteOf(id) != IT_NONE && rng.chance((0.03f + 0.03f * q) * eliteGate())) {
             if (id == IT_PISTOL) { int r = rng.irange(0, 2); id = r == 0 ? IT_M92 : r == 1 ? IT_LUGER : IT_MAGNUM; }
             else if (id == IT_RIFLE) id = rng.chance(0.5f) ? IT_AK47 : IT_M15;
             else id = eliteOf(id);

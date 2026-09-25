@@ -4,10 +4,14 @@
 #include "sprites.h"
 #include "coop.h"
 #include "atmosphere.h"
+extern std::vector<Vec2> g_steppers;   // setSteppers(): feet treading the grass this frame
 #include <cstdio>
+#include <vector>
 #include <ctime>
 #include <fstream>
 #include <map>
+#include <string>
+#include <unordered_map>
 #include <sstream>
 #ifdef _WIN32
 #include <direct.h>
@@ -88,7 +92,7 @@ int Profile::invCapacity() const {
 void grantStarterKit() {
     Profile& p = G.prof;
     p.weapons[0] = makeItem(IT_PISTOL, 1);          // makeItem fills the magazine
-    p.weapons[1] = p.armor = p.backpack = Item();
+    p.weapons[1] = p.armor = p.backpack = p.melee = Item();
     p.curWeapon = 0;
     p.inv.assign(INV_MAX_SLOTS, Item());
     addToSlots(p.inv, makeItem(IT_AMMO_LIGHT, 60), p.invCapacity());
@@ -111,7 +115,7 @@ std::vector<Item> applyDeathLoss() {
     std::vector<Item*> held;
     int cap = p.invCapacity();
     for (int i = 0; i < cap; i++) if (!p.inv[i].empty()) held.push_back(&p.inv[i]);
-    for (Item* it : {&p.weapons[0], &p.weapons[1], &p.armor, &p.backpack}) if (!it->empty()) held.push_back(it);
+    for (Item* it : {&p.weapons[0], &p.weapons[1], &p.armor, &p.backpack, &p.melee}) if (!it->empty()) held.push_back(it);
     G.summary.carried = (int)held.size();
     // Which half goes is down to luck: every stack, gun, vest and pack counts as one.
     Rng r(mix64((uint64_t)std::time(nullptr) ^ p.worldSeed ^ ((uint64_t)p.deaths << 24) ^ (uint64_t)(p.timeMin * 13)));
@@ -468,6 +472,11 @@ void drawWorldTiles(World& w, Vec2 cam, float timeSec) {
                     else if (along % 2 == 1 && lf == along / 2) R::rect(px + 7, py + 3, 2, 10, paint);
                 }
             }
+            // Road paint, garbage, grass creeping over the paving (0.12v).
+            if (t.overlay) {
+                Assets::TileRef ov = Art::overlayTile(t.overlay);
+                if (ov.valid()) R::tileAt(ov, px, py, TILE);
+            }
         }
     // Flat scenery details (grass tufts, litter, flowers) sit on top of the ground,
     // and rugs on the floors of buildings.
@@ -482,7 +491,17 @@ void drawWorldTiles(World& w, Vec2 cam, float timeSec) {
                 continue;
             }
             if (t.worldDeco) {
-                Art::Piece p = Art::groundDeco(t.worldDeco - 1);
+                Art::Piece p = Art::groundDeco(t.worldDeco, t.tone);
+                // Someone standing in it treads it flat (0.12v).
+                if (!g_steppers.empty()) {
+                    Vec2 c(x * TILE + TILE * 0.5f, (y + 1) * (float)TILE - 3);
+                    for (const Vec2& s : g_steppers)
+                        if (std::fabs(s.x - c.x) < 7 && std::fabs(s.y - c.y) < 6) {
+                            Art::Piece flat = Art::groundDecoTrodden(t.worldDeco, t.tone);
+                            if (flat.valid()) p = flat;
+                            break;
+                        }
+                }
                 if (p.valid()) {
                     float px = x * TILE + TILE * 0.5f, py = (y + 1) * (float)TILE;
                     R::spriteAt(*p.sprite, p.frame, {px, py}, R::Pivot::Bottom, 1, Color());
@@ -499,6 +518,135 @@ void drawWorldTiles(World& w, Vec2 cam, float timeSec) {
 }
 
 // Walls are flat tiles; everything else is queued into the depth-sorted pass.
+// ---- barricades (0.12v): Objects/Buildable, wooden or reinforced, joined up with
+// their neighbours: straight runs, the four corners, the T, and gates that swing.
+static const Assets::Sprite* buildablePart(bool reinforced, const char* part) {
+    static std::unordered_map<std::string, const Assets::Sprite*> cache;
+    std::string key = reinforced ? std::string("objects/buildable/reinforced/reinforced_wooden-wall_") + part
+                                 : std::string("objects/buildable/wooden/wooden-wall_") + part;
+    auto it = cache.find(key);
+    if (it != cache.end()) return it->second;
+    const Assets::Sprite* sp = Assets::find(key);
+    cache[key] = sp && sp->valid() ? sp : nullptr;
+    return cache[key];
+}
+static const Assets::Sprite* buildableSwing(bool reinforced, bool opensHorizontal) {
+    static const Assets::Sprite* s[2][2] = {};
+    static bool looked = false;
+    if (!looked) {
+        looked = true;
+        s[0][1] = Assets::find("objects/buildable/wooden/animations/wooden-wall_gates-openingh_closingv");
+        s[0][0] = Assets::find("objects/buildable/wooden/animations/wooden-wall_gates-closingh_openingv");
+        s[1][1] = Assets::find("objects/buildable/reinforced/animation/reinforced-wooden-wall_gates-openingh_closingv");
+        s[1][0] = Assets::find("objects/buildable/reinforced/animation/reinforced-wooden-wall_gates-closingh_openingv");
+    }
+    return s[reinforced][opensHorizontal];
+}
+
+static bool isBarricade(const World& w, int x, int y) {
+    if (!w.inBounds(x, y)) return false;
+    int s = w.at(x, y).solid;
+    return s == S_BARRICADE || s == S_GATE || s == S_GATE_OPEN;
+}
+
+static void drawBarricadeTile(const World& w, int x, int y, const Tile& t, Color tint) {
+    bool reinf = barricadeDef(t.variant).reinforced;
+    // The barricade's own health shows as the others' do: darker as it is broken up.
+    for (const Barricade& b : G.prof.barricades)
+        if (w.homeTx + b.dx == x && w.homeTy + b.dy == y) {
+            float f = clampf(b.hp / std::max(1.0f, barricadeMaxHp(b)), 0.35f, 1.0f);
+            tint = b.hurtT > 0 ? pal(P_CORAL) : Color(f * 0.4f + 0.6f, f * 0.55f + 0.45f, f * 0.55f + 0.45f);
+            break;
+        }
+    int mask = (isBarricade(w, x - 1, y) ? 1 : 0) | (isBarricade(w, x + 1, y) ? 2 : 0) | (isBarricade(w, x, y - 1) ? 4 : 0) | (isBarricade(w, x, y + 1) ? 8 : 0);
+    float px = (float)x * TILE, py = (float)y * TILE;
+    Vec2 base(px + TILE * 0.5f, py + TILE);
+    auto put = [&](const Assets::Sprite* sp, float cx, int frame = 0) {
+        if (sp) sceneAdd(Art::Piece{sp, frame, false, 1.0f}, Vec2(cx, base.y), tint);
+    };
+    bool vertical = (mask & 12) && !(mask & 3);
+    if (t.solid != S_BARRICADE) {
+        float open = gateOpenness(x, y);
+        if (vertical) {
+            if (open > 0.02f) put(buildableSwing(reinf, false), base.x, std::min(6, (int)(open * 7)));
+            else put(buildablePart(reinf, "gate_vertical"), base.x);
+            // The posts it hangs between.
+            if (const Assets::Sprite* post = buildablePart(reinf, "vertical_for-gate"))
+                sceneAdd(Art::Piece{post, 0, false, 1.0f}, Vec2(base.x, py + post->frame(0).h - 2), tint);
+        } else {
+            if (open > 0.02f) put(buildableSwing(reinf, true), base.x, std::min(6, (int)(open * 7)));
+            else put(buildablePart(reinf, "gate_horizontal"), base.x);
+        }
+        return;
+    }
+    switch (mask & 15) {
+    case 2 | 8: put(buildablePart(reinf, "left-side_right&down-connect"), px + 10); break;
+    case 1 | 8: put(buildablePart(reinf, "right-side_left&down-connect"), px + 6); break;
+    case 2 | 4: put(buildablePart(reinf, "left-side_right&up-connect"), px + 10); break;
+    case 1 | 4: put(buildablePart(reinf, "right-side_left&up-connect"), px + 6); break;
+    case 1 | 2 | 8: put(buildablePart(reinf, "middle_right&left&down-connect"), base.x); break;
+    case 4: case 8: case 4 | 8: put(buildablePart(reinf, "vertical"), base.x); break;
+    case 0: case 1: case 2: case 1 | 2: put(buildablePart(reinf, "horizontal"), base.x); break;
+    default:
+        // Where more runs meet than the pack drew: the post and the planks crossing it.
+        put(buildablePart(reinf, "vertical"), base.x);
+        put(buildablePart(reinf, "horizontal"), base.x);
+        break;
+    }
+}
+
+// The compound's wire gates (Tiles/Wire-Fence): flat like the fence, swinging open
+// with the pack's opening and closing frames, locked or not.
+static void drawFenceGate(int x, int y, const Tile& t, Color tint) {
+    static std::unordered_map<int, float> last;   // was it opening or closing
+    bool lock = (t.variant & 1) != 0;
+    float px = (float)x * TILE, py = (float)y * TILE;
+    float open = gateOpenness(x, y);
+    int key = y * 4096 + x;
+    float before = last.count(key) ? last[key] : open;
+    last[key] = open;
+    if (open <= 0.02f) {
+        if (const Assets::Sprite* sp = Assets::find(lock ? "tiles/wire-fence/wire-fence_gate_lock" : "tiles/wire-fence/wire-fence_gate"))
+            R::frame(sp->frame(0), px, py, TILE, TILE, tint);
+        return;
+    }
+    bool closing = open < before;
+    std::string k = std::string("tiles/wire-fence/wire-fence_") + (closing ? "closing" : "opening") + (lock ? "" : "_no-lock");
+    const Assets::Sprite* sp = Assets::find(k);
+    if (!sp) return;
+    int n = sp->frameCount();
+    int fr = closing ? std::min(n - 1, (int)((1.0f - open) * n)) : std::min(n - 1, (int)(open * n));
+    const Assets::Frame& f = sp->frame(fr);
+    R::frame(f, std::floor(px + (TILE - f.w) * 0.5f), py + TILE - f.h, (float)f.w, (float)f.h, tint);
+}
+
+// A downspout (Tiles/Gutter-And-Downspout, 0.12v): one of the sheet's four drop pipes,
+// grey or rusty, straight into the ground or bent out over it; `base` is the bottom of
+// the wall it runs down. In the rain the bent ones pour (Downspout_Rainwater).
+static void drawDownspout(Vec2 base, int pick) {
+    static const Assets::Sprite* sheet = Assets::find("tiles/gutter-and-downspout");
+    static const Assets::Sprite* pour = Assets::find("objects/nature/flowers_mashrooms_other-nature-stuff/puddles-and-water-anim/animations/downspout_rainwater");
+    if (!sheet) return;
+    int col = pick & 3;
+    bool bent = (col & 1) != 0;
+    // Straight ones: rows 0-1 end in a foot at y 24. Bent ones: the elbow's mouth at y 40.
+    float top = bent ? 8.0f : 0.0f, bottom = bent ? 41.0f : 25.0f;
+    Assets::Frame f = sheet->frame(0).sub(col * 16.0f, top, 16, bottom - top);
+    // The foot of a straight one stands at the wall's bottom; a bent one's mouth sticks
+    // out a little onto the ground in front.
+    float x = std::floor(base.x - 8), y = std::floor(base.y + (bent ? 7.0f : 1.0f) - f.h);
+    R::frame(f, x, y, (float)f.w, (float)f.h);
+    float rain = Atmo::rainAmount();
+    if (bent && pour && rain > 0.15f) {
+        int fr = (int)(G.realTime * 10.0f + base.x * 0.13f) % pour->frameCount();
+        const Assets::Frame& pf = pour->frame(fr);
+        R::frame(pf, std::floor(base.x - pf.w * 0.5f), y + f.h - 3, (float)pf.w, (float)pf.h, Color(1, 1, 1, clampf(rain * 1.5f, 0, 1)));
+    }
+}
+
+std::vector<Vec2> g_steppers;
+void setSteppers(const std::vector<Vec2>& feet) { g_steppers = feet; }
+
 void drawTileSolids(World& w, Vec2 cam, float timeSec) {
     int x0, y0, x1, y1;
     viewRange(w, cam, x0, y0, x1, y1, 5);
@@ -515,6 +663,26 @@ void drawTileSolids(World& w, Vec2 cam, float timeSec) {
                         w.at(tx, ty).solid != S_NONE) standing++;
             if (b.walls > 0 && standing * 5 < b.walls * 2) continue;
             R::shadowBox(b.x0 * (float)TILE, b.y0 * (float)TILE, (b.x0 + b.w) * (float)TILE, (b.y0 + b.h) * (float)TILE, 26);
+        }
+    }
+    // Where a building's wall has been blown out (0.12v): the pack's broken-wall
+    // stumps, round at a corner, straight along a side.
+    {
+        static const Assets::Sprite* broken[2] = {Assets::find("objects/buildings/destroyed-wall_not-corner"),
+                                                  Assets::find("objects/buildings/destroyed-wall_corner")};
+        for (const Building& b : w.buildings) {
+            if (b.x0 > x1 + 1 || b.y0 > y1 + 1 || b.x0 + b.w < x0 - 1 || b.y0 + b.h < y0 - 1) continue;
+            if (b.kind == BK_FLOOR || b.kind == BK_BUNKER) continue;
+            for (int ty = b.y0; ty < b.y0 + b.h; ty++)
+                for (int tx = b.x0; tx < b.x0 + b.w; tx++) {
+                    bool edgeX = tx == b.x0 || tx == b.x0 + b.w - 1, edgeY = ty == b.y0 || ty == b.y0 + b.h - 1;
+                    if ((!edgeX && !edgeY) || !w.inBounds(tx, ty) || w.at(tx, ty).solid != S_NONE || b.isDoor(tx, ty)) continue;
+                    const Assets::Sprite* s = broken[edgeX && edgeY ? 1 : 0];
+                    if (!s) continue;
+                    const Assets::Frame& f = s->frame(0);
+                    bool flip = tx == b.x0 + b.w - 1;
+                    R::frame(f, tx * (float)TILE + (TILE - f.w) * 0.5f, (ty + 1) * (float)TILE - f.h, (float)f.w, (float)f.h, Color(1, 1, 1, 0.9f), flip);
+                }
         }
     }
     for (int y = y0; y <= y1; y++)
@@ -556,7 +724,8 @@ void drawTileSolids(World& w, Vec2 cam, float timeSec) {
                 case S_WALL_BRICK: case S_WALL_CONCRETE: case S_WALL_WOOD: case S_DOOR: hgt = 20; break;
                 case S_BUNKER: hgt = 16; break;
                 case S_CRATE: case S_SANDBAG: hgt = 10; break;
-                case S_FENCE: hgt = 7; break;
+                case S_FENCE: case S_FENCE_GATE: hgt = 7; break;
+                case S_BARRICADE: case S_GATE: hgt = 12; break;
                 default: break;
                 }
                 if (hgt > 0) R::shadowBox(px, py, px + TILE, py + TILE, hgt);
@@ -583,13 +752,13 @@ void drawTileSolids(World& w, Vec2 cam, float timeSec) {
                 break;
             }
             case S_TREE: {
-                Art::Piece p = Art::tree(t.variant, timeSec);
+                Art::Piece p = Art::tree(t.variant, timeSec, t.tone);
                 if (p.valid()) sceneAdd(p, base + Vec2(0, 3), tint);
                 else sceneAddSprite(TREE, {base.x, base.y - TILE * 0.5f}, tint);
                 break;
             }
             case S_BUSH: {
-                Art::Piece p = Art::bush(t.variant, timeSec);
+                Art::Piece p = Art::bush(t.variant, timeSec, t.tone);
                 if (p.valid()) sceneAdd(p, base + Vec2(0, 2), tint);
                 else sceneAddSprite(BUSH, {base.x, base.y - TILE * 0.5f}, tint);
                 break;
@@ -608,7 +777,7 @@ void drawTileSolids(World& w, Vec2 cam, float timeSec) {
                 break;
             }
             case S_BOUNDARY: {
-                Art::Piece p = Art::tree((uint8_t)(t.variant + x + y), timeSec);
+                Art::Piece p = Art::tree((uint8_t)(t.variant + x + y), timeSec, t.tone);
                 Color dark(0.45f, 0.45f, 0.55f);
                 if (p.valid()) sceneAdd(p, base + Vec2(0, 3), dark);
                 else R::spriteRect(BOUNDARY, px, py, TILE, TILE);
@@ -643,8 +812,13 @@ void drawTileSolids(World& w, Vec2 cam, float timeSec) {
                 // A doorway in an inner wall: stacked door tiles mean the wall runs
                 // up and down, so it is seen edge-on.
                 if (!onEdge && (doorAt(x, y - 1) || doorAt(x, y + 1))) face = FACE_SIDE;
-                bool open = t.solid == S_DOOR_OPEN, alt = (t.variant & 1) != 0;
-                Art::Piece p = Art::door((uint8_t)(open ? (alt ? 3 : 1) : (alt ? 2 : 0)));
+                bool open = t.solid == S_DOOR_OPEN;
+                // The building's style of door (world generation sets 0-4), shot
+                // through once it has taken a beating.
+                int style = t.variant < 5 ? t.variant : (t.variant & 1);
+                int state = open ? 1 : (t.hp > 0 && t.hp < solidInfo(S_DOOR).hp / 2 ? 2 : 0);
+                Art::Piece p = Art::doorStyle(style, state, x + y);
+                if (style == 4 && open) tint = Color(0.62f, 0.64f, 0.7f);   // an ajar door, in the metal's grey
                 if (face == FACE_SIDE && p.valid()) {
                     // One edge-on leaf per doorway, standing on its lower tile.
                     if (doorAt(x, y + 1)) break;
@@ -659,12 +833,26 @@ void drawTileSolids(World& w, Vec2 cam, float timeSec) {
                 else R::spriteRect(WALL_WOOD, px, py, TILE, TILE, tint);
                 break;
             }
+            case S_BARRICADE:
+            case S_GATE:
+            case S_GATE_OPEN:
+                drawBarricadeTile(w, x, y, t, tint);
+                break;
+            case S_FENCE_GATE:
+            case S_FENCE_GATE_OPEN:
+                drawFenceGate(x, y, t, tint);
+                break;
             default: {
+                // A fence runs on into its gates.
+                auto same = [&](int sx, int sy) {
+                    int o = w.at(sx, sy).solid;
+                    return o == t.solid || (t.solid == S_FENCE && (o == S_FENCE_GATE || o == S_FENCE_GATE_OPEN));
+                };
                 int mask = 0;
-                if (x > 0 && w.at(x - 1, y).solid == t.solid) mask |= 1;
-                if (x + 1 < w.w && w.at(x + 1, y).solid == t.solid) mask |= 2;
-                if (y > 0 && w.at(x, y - 1).solid == t.solid) mask |= 4;
-                if (y + 1 < w.h && w.at(x, y + 1).solid == t.solid) mask |= 8;
+                if (x > 0 && same(x - 1, y)) mask |= 1;
+                if (x + 1 < w.w && same(x + 1, y)) mask |= 2;
+                if (y > 0 && same(x, y - 1)) mask |= 4;
+                if (y + 1 < w.h && same(x, y + 1)) mask |= 8;
                 if (t.solid == S_WALL_WOOD || t.solid == S_WALL_CONCRETE) {
                     for (const Building& b : w.buildings) {
                         if (x < b.x0 || y < b.y0 || x >= b.x0 + b.w || y >= b.y0 + b.h) continue;
@@ -675,7 +863,7 @@ void drawTileSolids(World& w, Vec2 cam, float timeSec) {
                         break;
                     }
                 }
-                Art::Piece p = Art::wallTile(t.solid, t.variant, mask);
+                Art::Piece p = t.solid == S_FENCE && (t.flags & TF_IRON) ? Art::ironFence(mask) : Art::wallTile(t.solid, t.variant, mask);
                 if (p.valid()) R::frame(p.sprite->frame(p.frame), px, py, TILE, TILE, tint);
                 else R::spriteRect(si.sprite, px, py, TILE, TILE, tint);
                 break;
@@ -692,6 +880,21 @@ void drawTileSolids(World& w, Vec2 cam, float timeSec) {
             Art::Piece wp = Art::wreck(p.variant, p.frame);
             sceneAdd(wp, p.pos);
             if (wp.valid()) sceneLift(spriteEmptyRowsBelow(wp.sprite, wp.frame));
+            continue;
+        }
+        if (p.kind == PROP_OBJECT) {
+            Art::Piece op = Art::propArt(p);
+            sceneAdd(op, p.pos);
+            if (op.valid()) sceneLift(spriteEmptyRowsBelow(op.sprite, op.frame));
+            continue;
+        }
+        if (p.kind == PROP_WALLDECO) {
+            // Hangs on a front wall tile; shot away with it.
+            int tx = World::toTile(p.pos.x), ty = World::toTile(p.pos.y - 1);
+            if (!w.inBounds(tx, ty) || w.at(tx, ty).solid == S_NONE) continue;
+            if (p.variant == Art::OB_DOWNSPOUT) { drawDownspout(p.pos, p.frame & 63); continue; }
+            Art::Piece dp = Art::object(p.variant, p.frame & 63, p.frame >> 6);
+            if (dp.valid()) R::spriteAt(*dp.sprite, dp.frame, p.pos, R::Pivot::Bottom, 1, Color(), dp.flipX != p.flipX);
             continue;
         }
         if (p.kind == PROP_STAIRS) {
@@ -787,7 +990,7 @@ void drawTileSolids(World& w, Vec2 cam, float timeSec) {
             }
             continue;
         }
-        Art::Piece art = p.kind == PROP_CAR ? Art::car(p.variant) : Art::streetLight(p.variant);
+        Art::Piece art = p.kind == PROP_CAR ? Art::car(p.variant, p.frame) : Art::streetLight(p.variant);
         art.flipX = art.flipX != p.flipX;   // which way round the art pack drew it
         sceneAdd(art, p.pos);
     }
@@ -797,7 +1000,26 @@ void drawTileSolids(World& w, Vec2 cam, float timeSec) {
         bool empty = c.searched && std::all_of(c.items.begin(), c.items.end(), [](const Item& i) { return i.empty(); });
         Color ct = empty ? Color(0.65f, 0.65f, 0.7f) : Color();
         Art::Piece art = c.kind == CK_CORPSE ? Art::corpse(c.variant) : Art::containerArt(c.kind, c.variant);
-        if (art.valid()) { sceneAdd(art, c.pos + Vec2(0, 4), ct); sceneNoReflect(); }
+        // Something dropped on its own (a bag of one kind of thing) lies there as itself.
+        if (c.kind == CK_BAG && !empty) {
+            int only = IT_NONE;
+            bool one = true;
+            for (const Item& i : c.items)
+                if (!i.empty()) { if (only == IT_NONE) only = i.id; else if (i.id != only) one = false; }
+            if (one && only != IT_NONE) {
+                Art::Piece pk = Art::pickable(only);
+                if (pk.valid()) { sceneAdd(pk, c.pos + Vec2(0, 4), ct); sceneNoReflect(); continue; }
+            }
+        }
+        if (art.valid()) {
+            sceneAdd(art, c.pos + Vec2(0, 4), ct);
+            sceneNoReflect();
+            // A helmet that rolled off as they fell (Character/Helmet death).
+            if (c.kind == CK_CORPSE && (c.variant & 0x40)) {
+                Art::Piece hm = Art::helmetFall((c.variant & 1) != 0, 99);
+                if (hm.valid()) { sceneAdd(hm, c.pos + Vec2(0, 4), ct, 1, 0.01f); sceneNoReflect(); }
+            }
+        }
         else sceneAddSprite(c.kind == CK_CORPSE ? C_CORPSE : C_BAG, c.pos, ct);
     }
 }
@@ -865,6 +1087,26 @@ void drawRoofs(World& w, Vec2 cam, Vec2 viewer, float dt) {
         if (rh < 1) continue;
         roofDrawn[bi] = 1;
         Color tint(1, 1, 1, 1.0f - b.reveal);
+        if (b.flatRoof) {
+            // A city block's flat concrete roof (0.12v), parapet round the edge, with
+            // whatever stands up there.
+            for (int ry = 0; ry < rh; ry++)
+                for (int rx = 0; rx < b.w; rx++) {
+                    int col = rx == 0 ? 0 : rx == b.w - 1 ? 2 : 1, row = ry == 0 ? 0 : ry == rh - 1 ? 2 : 1;
+                    Assets::TileRef ref = Art::flatRoofTile(b.sheet, col, row, (uint8_t)hash2(b.x0 + rx, b.y0 + ry, 0x0F1A7u));
+                    Color tc = tint;
+                    if (g_roofPeek) tc.a *= 1.0f - g_roofPeek(b.x0 + rx, b.y0 + ry);
+                    if (ref.valid() && tc.a > 0.01f) R::tileAt(ref, px0 + rx * TILE, py0 + ry * TILE, TILE, tc);
+                }
+            for (int i = b.roofProp0; i < b.roofProp0 + b.roofPropN && i < (int)w.roofProps.size(); i++) {
+                const WorldProp& rp = w.roofProps[i];
+                Art::Piece op = Art::object(rp.variant, rp.frame & 63, rp.frame >> 6);
+                Color tc = tint;
+                if (g_roofPeek) tc.a *= 1.0f - g_roofPeek(World::toTile(rp.pos.x), World::toTile(rp.pos.y - 1));
+                if (op.valid() && tc.a > 0.01f) R::spriteAt(*op.sprite, op.frame, rp.pos, R::Pivot::Bottom, 1, tc, op.flipX != rp.flipX);
+            }
+            continue;
+        }
         for (int ry = 0; ry < rh; ry++) {
             int row = rh == 1 ? 2
                     : ry == 0 ? 0
@@ -1088,6 +1330,7 @@ static void writeProfile(std::ostream& o, const Profile& p) {
     o << "weapon0 "; writeItem(o, p.weapons[0]);
     o << "weapon1 "; writeItem(o, p.weapons[1]);
     o << "armor "; writeItem(o, p.armor);
+    o << "melee "; writeItem(o, p.melee);
     o << "backpack "; writeItem(o, p.backpack);
     o << "inv " << p.inv.size() << "\n";
     for (auto& it : p.inv) writeItem(o, it);
@@ -1107,6 +1350,9 @@ static void writeProfile(std::ostream& o, const Profile& p) {
     for (int i = 0; i < DU_COUNT; i++) o << ' ' << p.defUp[i];
     o << "\nturrets " << p.turrets.size() << "\n";
     for (const Turret& t : p.turrets) o << t.dx << ' ' << t.dy << ' ' << t.type << ' ' << t.level << ' ' << t.hp << "\n";
+    o << "autoequip " << (p.autoEquip ? 1 : 0) << "\n";
+    o << "barricades " << p.barricades.size() << "\n";
+    for (const Barricade& b : p.barricades) o << b.dx << ' ' << b.dy << ' ' << b.type << ' ' << b.hp << "\n";
     // The dead are never written: dead is dead, even if they were still on the roster.
     int alive = 0;
     for (const Hireling& h : p.squad) alive += !h.dead && h.hp > 0;
@@ -1151,6 +1397,8 @@ bool save_game() {
     if (!o) return false;
     writeProfile(o, G.prof);
     o.close();
+    // Which slot was played last (0.12v): the main menu's Load picks it back up.
+    if (std::ofstream l(dataPath("saves/last_slot.txt")); l) l << G.saveSlot << "\n";
     if (Coop::host()) Coop::saveGuests();
     persistSaves();
     return true;
@@ -1190,6 +1438,18 @@ static bool readProfile(std::istream& in, Profile& p, bool& hadTurrets) {
                 t.type = std::clamp(t.type, 0, TT_COUNT - 1);
                 t.level = std::clamp(t.level, 1, TURRET_MAX_LEVEL);
                 if ((int)p.turrets.size() < MAX_TURRETS) p.turrets.push_back(t);
+            }
+        }
+        else if (key == "autoequip") { int v = 1; in >> v; p.autoEquip = v != 0; }
+        else if (key == "barricades") {
+            size_t n = 0;
+            in >> n;
+            p.barricades.clear();
+            for (size_t i = 0; i < n; i++) {
+                Barricade b;
+                in >> b.dx >> b.dy >> b.type >> b.hp;
+                b.type = std::clamp(b.type, 0, BT_COUNT - 1);
+                if ((int)p.barricades.size() < MAX_BARRICADES) p.barricades.push_back(b);
             }
         }
         else if (key == "squad") {
@@ -1278,6 +1538,7 @@ static bool readProfile(std::istream& in, Profile& p, bool& hadTurrets) {
         else if (key == "weapon0") p.weapons[0] = readItem(in);
         else if (key == "weapon1") p.weapons[1] = readItem(in);
         else if (key == "armor") p.armor = readItem(in);
+        else if (key == "melee") { p.melee = readItem(in); if (itemDef(p.melee.id).cat != Cat::Melee) p.melee = Item(); }
         else if (key == "backpack") p.backpack = readItem(in);
         else if (key == "daymem") in >> p.dayMem.day;
         else if (key == "dm_explored") readBytes(in, p.dayMem.explored);
@@ -1363,6 +1624,13 @@ bool profileFromText(const std::string& text, Profile& out) {
     std::istringstream in(text);
     bool hadTurrets = false;
     return readProfile(in, out, hadTurrets);
+}
+
+int last_slot() {
+    std::ifstream in(dataPath("saves/last_slot.txt"));
+    int s = -1;
+    if (!(in >> s) || s < 0 || s >= SAVE_SLOTS || !save_exists(s)) return -1;
+    return s;
 }
 
 bool load_game(int slot) {

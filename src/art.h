@@ -6,11 +6,12 @@
 #include <vector>
 
 struct World;
+struct WorldProp;
 
 namespace Art {
 
 enum class Dir { Down, Up, Right, Left };
-enum class Anim { Idle, Run, Shoot, Reload, Death, Attack, Walk };
+enum class Anim { Idle, Run, Shoot, Reload, Death, Attack, Walk, Punch, PickUp, Rack };
 
 struct Piece {
     const Assets::Sprite* sprite = nullptr;
@@ -42,41 +43,116 @@ Piece wallTile(int solidType, uint8_t variant, int neighbourMask = 0);
 // upper slats, ridge, lower slats, bottom edge.
 Assets::TileRef roofTile(uint8_t style, int col, int row);
 Piece door(uint8_t variant);             // marks a way into a roofed building
+// 0.12v: a door by style (0 brown, 1 dark, 2 white: the furniture pack's; 3 beige,
+// 4 metal: the world pack's) and state (0 shut, 1 open, 2 shot through).
+Piece doorStyle(int style, int state, int pick = 0);
+// 0.12v: a flat concrete roof, drawn from the building's own facade sheet (0..3).
+Assets::TileRef flatRoofTile(uint8_t sheet, int col, int row, uint8_t variant);
+
+// ---- ground overlays (Tile::overlay, 0.12v) ----
+// Flat art laid over a tile's ground: road paint, heaps of garbage, grass creeping onto
+// paving. Ids are ranges; the generator adds the frame it wants to the base.
+enum Overlay : uint8_t {
+    OV_NONE = 0,
+    OV_CROSS_EW = 1,       // 1..3 zebra stripes for a road running left-right (a column of them)
+    OV_CROSS_NS = 4,       // 4..6 zebra stripes for a road running up-down (a row of them)
+    OV_PARKING = 7,        // 7..18 a pair of parking bays, 4 x 3 tiles, row by row
+    OV_GARBAGE = 20,       // 20..48 Garbage_TileSet frames 0..28
+    OV_GRASSTOP = 50,      // 50..97 Grass_On-Top_TileSet frames 0..47
+    OV_COUNT = 98
+};
+Assets::TileRef overlayTile(uint8_t overlay);
 
 // ---- world props (bottom-anchored, may be taller than one tile) ----
-Piece tree(uint8_t variant, float time = 0);
-Piece bush(uint8_t variant, float time = 0);
+// `tone` (Tone) picks the palette: one colouring per stand of trees rather than a
+// random one per tree. TONE_AUTO keeps the old mix.
+Piece tree(uint8_t variant, float time = 0, uint8_t tone = 0);
+Piece bush(uint8_t variant, float time = 0, uint8_t tone = 0);
 Piece rock(uint8_t variant);
 Piece barrel(uint8_t variant);
-Piece car(uint8_t variant);
+// tone 0: an ordinary (or rusted) car; TONE_GREEN / DARK / BLEAK: one overgrown with that grass.
+Piece car(uint8_t variant, uint8_t tone = 0);
 // A wreck from the vehicle pack (0.11v): `variant` picks the car, `dir` 0..7 which way
 // it faces (east, then clockwise).
 Piece wreck(uint8_t variant, int dir);
 int wreckCount();
 Piece streetLight(uint8_t variant);
-Piece groundDeco(uint8_t variant);       // grass tufts, flowers, litter
+// Tile::worldDeco: grass tufts, flowers, litter. The top three bits pick the kind
+// (DecoKind), the low five which one; tufts and moss follow `tone`.
+enum DecoKind : uint8_t { DK_LEGACY, DK_TUFT, DK_FLOWER, DK_FOREST, DK_JUNK, DK_PEBBLE, DK_MOSS, DK_POSTER };
+inline uint8_t decoCode(int kind, int which) { return (uint8_t)((kind << 5) | (which & 31)); }
+Piece groundDeco(uint8_t code, uint8_t tone = 0);
+// A tuft of grass trodden flat under someone's feet (the pack's stepping-on frames),
+// or nothing when that tuft has none.
+Piece groundDecoTrodden(uint8_t code, uint8_t tone = 0);
+
+// ---- standing objects (0.12v) ----
+// Street furniture, clutter and rooftop gear from the pack, placed by the world's
+// dressing pass as PROP_OBJECT / PROP_WALLDECO / roof props.
+enum ObjectKind : uint8_t {
+    OB_NONE, OB_BENCH_DOWN, OB_BENCH_UP, OB_BENCH_SIDE, OB_HYDRANT, OB_TRASH_CAN, OB_DUMPSTER, OB_VENDING,
+    OB_STOP_DOWN, OB_STOP_UP, OB_STOP_SIDE, OB_BARREL, OB_TIRES, OB_PALLET, OB_CART, OB_CONE,
+    OB_CONTAINER_V, OB_CONTAINER_H, OB_FRIDGE, OB_WASHER, OB_TRUNK, OB_STUMP, OB_BOULDER, OB_TRACTOR,
+    OB_MOTORBIKE, OB_JUNK,
+    // on a roof
+    OB_HVAC, OB_VENT, OB_ANTENNA, OB_ROOF_HOLE, OB_DUCT,
+    // on a wall
+    OB_WINDOW, OB_WINDOW_BROKEN, OB_WINDOW_BOARDED, OB_POSTER, OB_GRAFFITI, OB_IVY, OB_AWNING, OB_SHOPFRONT,
+    OB_PAINTING,               // 0.12v: on a room's back wall (furniture pack: sunset, hills)
+    OB_DOOR_BOARDED,           // 0.12v: a boarded-up door on a front wall (beige or metal)
+    OB_BALCONY,                // 0.12v: on a flat roof's front edge (pick 0-3: left/right, with a ladder hole)
+    OB_LADDER,                 // 0.12v: from a balcony's hole down to the street (plain, rusty)
+    OB_CELLAR,                 // 0.12v: a storm cellar's doors in the yard (overgrown by the grass round it)
+    OB_DOWNSPOUT,              // 0.12v: Tiles/Gutter-And-Downspout, drawn by the scene (pick: grey/rusty, into the ground/out on it)
+    OB_COUNT
+};
+// `pick` chooses among the kind's art (colours, styles); `overgrown` 0 plain, 1 green,
+// 2 dark green, 3 bleak yellow, where the pack draws it that way.
+Piece object(int kind, int pick, int overgrown = 0);
+int objectChoices(int kind);
+// WorldProp::frame packing for objects: which one in the low six bits, overgrowth above.
+inline uint8_t objectFrame(int pick, int overgrown) { return (uint8_t)((pick & 63) | ((overgrown & 3) << 6)); }
+// The art of any prop that stands in the way with its pixels (cars, wrecks, objects).
+Piece propArt(const ::WorldProp& p);
 Piece stump();
+// Objects/Pickable (0.12v): how one kind of item looks lying on the ground, or nothing.
+Piece pickable(int itemId);
+// Tiles/Iron-Fence (0.12v): a wrought-iron railing joined up by `neighbourMask`
+// (1 left, 2 right, 4 up, 8 down).
+Piece ironFence(int neighbourMask);
 // The bunker hatch, lid up; `closed` = slammed shut and sealed (a horde, the night).
 Piece hatch(bool closed = false);
 Piece containerArt(int kind, uint8_t variant);
+// `variant`: bit 0 which side it lies on, bits 1-2 which of the three falls, 0x40 a
+// helmet on (it rolls off with the body), 0x80 a raider (their red).
 Piece corpse(uint8_t variant);
+Piece helmetFall(bool left, int frame);
 Piece furniture(int which);
 
 // ---- characters ----
 // Human raiders and the player share the pack's character art; `enemy` picks the
 // copy with the shirt dyed red.
 // `shirt` is the player's chosen colour (Assets::shirt), ignored for enemies.
-Piece humanBody(Dir d, Anim a, int frame, bool holdingGun, bool enemy = false, int shirt = 0);
+// Idle, Run, Punch and PickUp with or without hands (a gun's sheet draws them);
+// Death in one of three falls (`fall`).
+Piece humanBody(Dir d, Anim a, int frame, bool holdingGun, bool enemy = false, int shirt = 0, int fall = 0);
 Piece humanGun(Dir d, Anim a, int frame, int weaponItem);
-Piece helmet(Dir d, int frame);
-Piece zombie(int kind, Dir d, Anim a, int frame);
+Piece helmet(Dir d, int frame, Anim a = Anim::Idle);
+// The baseball bat (Character/Bat): carried (Idle/Run) or swung (Attack).
+Piece bat(Dir d, Anim a, int frame);
+// `alt` picks the second attack (the pack draws two swings) and, for the axe zombie,
+// its empty-handed sheets once it has thrown the axe (Idle/Walk/Attack/PickUp = taking it back).
+Piece zombie(int kind, Dir d, Anim a, int frame, bool alt = false, bool noAxe = false);
+// The axe zombie's axe in flight (0 thrown, 1 landing, 2 landed) facing `d`.
+Piece thrownAxe(Dir d, int stage, int frame);
 // A horde zombie going down; the frame clamps on the last, lying, one.
-Piece zombieDeath(int kind, bool left, int frame);
+Piece zombieDeath(int kind, bool left, int frame, int fall = 1, bool noAxe = false);
 Piece muzzleFlash(Dir d, int frame);
 Piece bulletSprite(int weaponItem);
 
 // ---- items & UI ----
-const Assets::Sprite* itemIcon(int itemId);
+// `count`: a big stack of rounds shows as a crate.
+const Assets::Sprite* itemIcon(int itemId, int count = 0);
 Piece uiPiece(const char* name);
 
 }  // namespace Art

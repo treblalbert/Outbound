@@ -12,6 +12,7 @@ enum Action {
     Shoot, Aim, Move, Choose, Select, AltSelect, Fullscreen,
     Accelerate, Brake, Steer, Handbrake,   // 0.11v: driving
     Grab, PagePrev, PageNext, Join,        // 0.12v: moving items with a controller, pages, local co-op
+    Melee,                                 // 0.12v: a punch, or the bat
     COUNT
 };
 

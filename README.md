@@ -14,10 +14,10 @@ first launch, changeable any time from the main menu).
 Needs the Steamworks SDK unpacked in `external/sdk` (for co-op) and these MSYS2 packages:
 
 ```
-pacman -S mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-glfw mingw-w64-ucrt-x86_64-openal
+pacman -S mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-glfw mingw-w64-ucrt-x86_64-openal mingw-w64-ucrt-x86_64-libvorbis
 ```
 
-Then either:
+(MSYS2 installed in `C:\msys64`, which `build.bat` expects.) Then either:
 
 ```
 build.bat            :: full build into bin\Outbound.exe (+ DLLs and every asset it uses)
@@ -80,7 +80,10 @@ action (Kenney's Input Prompts), and switch the moment you pick up a controller.
 
 Guns come in Fortnite-style tiers. The trader always sells the ordinary **Uncommon**
 (green) version, which works exactly as guns always have. Guns found in the world or
-dropped by raiders roll a tier; better loot rolls better tiers.
+dropped by raiders roll a tier; better loot rolls better tiers. The days gate it: nothing
+epic turns up before day 3 and rare guns are scarce at first (about 6% of guns on day
+1), the odds reach their full range around day 8, and elite guns start on day 4.
+However far you walk, the first days' loot stays modest.
 
 | Tier | Colour | Damage | Spread | Reload | Sells for |
 | --- | --- | --- | --- | --- | --- |
@@ -162,9 +165,30 @@ Auto, Flamethrower, Laser, Rocket, gated by hordes repelled) and research global
 upgrades. Turrets persist between days. Sleeping patches the bunker up and restores
 half the plating on standing turrets; wrecked turrets need a paid repair.
 
+Its **Walls** tab builds barricades from the art pack's buildable wood: wooden walls
+and gates, and reinforced ones once a horde has been repelled. Hold the button and
+drag to lay a line. The walls join up at corners and T-junctions. Gates swing open
+for you, your mercenaries and your friends, and shut behind you. The dead bash
+through a wall when going round it would take longer, and a reinforced wall holds them
+a long time. Broken barricades are repaired or sold from the same tab. The compound's
+back fence now has wire gates (the middle one locked) that open the same way.
+
 The **recruiter** hires up to three mercenaries. The more you pay, the better their
 gun, health and aim. Set each one to follow you outside or guard the compound. A
 hireling who dies is gone for good, and their gun is left on the body.
+
+## Fighting up close
+
+**F** (a tap of **R3** on a controller; holding R3 toggles the laser) hits whatever is
+right in front of you: a punch, or a swing of the **baseball bat** if one is in your
+inventory's **MELEE** slot (the trader sells them, and they turn up in the world). It
+costs a little stamina, knocks the target back and puts it off its stroke. Blows also
+break fences, walls, doors, crates, hedges and trees hit by hit, like bullets, so the
+bat can open a wall or cut a path through a wood. Mercenaries punch the dead
+off when they get too close to shoot.
+
+The axe zombies throw their axes at anyone a little way off, then fight bare-handed
+until they pick them back up.
 
 ## Weather and colour
 
@@ -207,6 +231,34 @@ a one tile dirt shoulder at generation time so asphalt never meets grass directl
 * Everything else is a single sprite, looked up by its lowercased path, e.g.
   `objects/nature/green/tree_5_big_green`.
 
+The same sheets also draw kerbs, and the game uses them (0.12v): each Background sheet
+has a kerbstone edge for its paving (frames 6-10, 30-34, 56-58), its grass (11-13,
+35-37, 59-61, 120-121, 144-145) and its earth (19-21, 41-45, 65-69). Paving next to a
+road gets the kerb on its road side, and a planter (a tile with `TF_KERB`) gets one
+wherever it ends, so the asphalt stays plain right up to the kerb. The Bleak-Yellow
+sheet is the dead grey scrub (`G_WASTE`); it draws its own edges against green grass
+(its earth ring's frames -3, inner corners -2), dry grass (+3 / +2) and earth.
+Road paint (zebra crossings 169-171 / 216-264, parking bays 193-244), heaps from
+`Garbage_TileSet` and grass creeping over paving from `Grass_On-Top_TileSet` are laid
+over the ground as `Tile::overlay` (see `Art::Overlay`).
+
+Everything that makes the world look lived in is added last, by the dressing pass in
+`src/dress.cpp`, on dice of its own so it never moves the day's buildings, loot or
+raiders: vegetation colours in stands (`Tile::tone`), ground detail (`Tile::worldDeco`,
+see `Art::DecoKind`), road paint and garbage, street furniture and clutter
+(`PROP_OBJECT`, which block with their pixels like cars; see `Art::ObjectKind`),
+windows, posters and graffiti on the front walls (`PROP_WALLDECO`), and what stands on
+the flat city roofs (`World::roofProps`). `tools/make_flat_roof.py` makes the plain
+roof concrete it uses.
+
+The interface is drawn from the pack's own UI sheets (0.12v, `src/ui.cpp`): panels are
+`UI/Inventory/Inventory_1` cut in nine (corners kept, edges repeated, middle
+stretched), buttons the beige `Main Menu/Blank` (the lettered Play, Load, Save,
+Settings and Quit where the label is theirs, in English), item cells
+`Inventory-Cell` / `Inventory-Chosen`, sliders the menu `Scrollbar`, check boxes
+`Checkmark`, confirmations `Button_Yes` / `Button_No`, recipes the `Crafting` strips,
+and the HUD the `HP`, `Hunger`, `Bullet Indicators` and `Quick-Access-Inventory` art.
+
 Add or replace a PNG and it appears on the next launch — `src/art.cpp` is the one
 file that maps game concepts (trees, cars, guns, zombies, item icons) to those
 paths. Sounds work the same way: `assets/sounds/<name>.wav` overrides the
@@ -222,6 +274,7 @@ Anything the pack does not cover falls back to small procedurally drawn sprites.
 | `art.cpp` | maps game concepts to sprites in the pack |
 | `render.cpp` | sprite batching, world/glow/UI layers, lighting composite |
 | `world.cpp` | world generation, collision, line of sight, pathfinding field |
+| `dress.cpp` | the dressing pass: vegetation colours, ground detail, street furniture, roofs and fronts |
 | `raid.cpp` | the outside world: player, AI, bullets, the night |
 | `base.cpp` | the bunker and its stations, the recruiter |
 | `defense.cpp` | turret/mercenary tables and the defense console editor |
@@ -234,7 +287,14 @@ Developer flags (handy while working on the game):
 `--squad` (two hirelings), `--zombies`, `--defense`, `--recruit`, `--sleephorde=N`
 (times horde N fought offscreen and quits), `--weather=N` (hold one weather: 0 clear,
 1 hazy, 2 overcast, 3 drizzle, 4 rain, 5 storm, 6 fog, 7 rain + fog, 8 overcast + fog),
-`--shot=FILE@SECONDS`, `--screen=lang|slots|intro|credits|controls`.
+`--shot=FILE@SECONDS`, `--screen=lang|slots|intro|credits|controls`, `--seed=N` (with
+`--raid`: the same world every run), `--at=X,Y` (with `--raid`: start on that tile),
+`--barricades` (with `--raid` or `--defense`: a ring of walls and gates round the
+bunker), `--searching` (with `--raid`: the nearest container open, still being
+searched), `--bot` (walks in a circle, shooting and punching what comes close),
+`--local=N` (with `--raid`: N local co-op players).
+Set `OUTBOUND_DRESS_LOG=1` to have the city blocks and buildings listed with their
+tile coordinates, handy with `--at` for looking at a particular kind of place.
 
 `--raid` and `--base` start a throwaway game and never write to a save slot.
 
@@ -267,6 +327,34 @@ every 30 seconds while you are outside. Closing the game mid-raid (or **Save & q
 menu** from the pause screen) keeps the raid: Continue puts you back outside at the same
 time and place, with what you carried, what you looted and who you killed. Only
 **Abandon raid** throws the trip away.
+
+## Local co-op
+
+Up to four players on one screen. **Local co-op** on the main menu opens the lobby:
+
+* A controller (Xbox or PlayStation) joins with **A / Cross** or **START / OPTIONS** and
+  leaves with **B / Circle**; the keyboard and mouse join with **ENTER** (or the *Join
+  with keyboard* button) and leave with **BACKSPACE**. Left and right pick a shirt.
+  Every place shows its own device's buttons.
+* Player 1 is whoever joined first and plays the save's own character; they start with
+  **START / ENTER** once there is a second player, then pick the save slot.
+* In the game a free controller can still drop in with **START** (or the keyboard with
+  **ENTER**), and a player drops out from their pause menu.
+
+Everyone shares the world and one camera that follows the group and pulls back (as far
+as the *co-op zoom* option lets it) to keep everyone in view; nobody can walk off it.
+Each player has a card along the bottom (health, stamina, gun and magazine, grenades
+and medicine), their own prompts in their own buttons, and their own pointer in their
+colour; controllers aim with the right stick, with aim assist. One player works a menu
+at a time. Stairs, the catacombs and the hatch take the whole group. A player who
+bleeds out waits in the bunker until the others come home; if everyone bleeds out the
+day ends for all.
+
+**Controllers and Steam:** the game only starts Steam when you open Online co-op.
+While it runs as the test app 480 (Spacewar), Steam applies that app's Steam Input
+setup and can take a controller over. If a controller stops working in online co-op,
+turn Steam Input off for Spacewar in Steam (its Properties > Controller). The game writes
+the joysticks it sees to `saves/input_log.txt`.
 
 ## Co-op (Steam)
 

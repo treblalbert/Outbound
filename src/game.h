@@ -24,7 +24,7 @@ constexpr int INV_MAX_SLOTS = 48;
 constexpr int GAMEPLAY_INV_MAX = 32;   // 8 base + 16 Deep Pockets + 8 large pack
 constexpr int BASE_INV_SLOTS = 8;
 
-enum class Scene { Menu, Credits, Controls, Intro, Slots, Base, Raid, Defense, Lobby, Splash };
+enum class Scene { Menu, Credits, Controls, Intro, Slots, Base, Raid, Defense, Lobby, Splash, LocalLobby };
 
 enum class Panel {
     None, Inventory, Loot, Map, Pause, Controls, Stash, Trader, Workbench, Bed, ExitConfirm, Summary, ConfirmNewGame, QuitConfirm, Mission, Recruit, Tutorial, Options, CryptIntro, Crafter,
@@ -73,6 +73,28 @@ struct Turret {
     Vec2 beamEnd;
     int target = -1;
 };
+
+// ---- barricades (0.12v): walls and gates built round the hatch from the pack's
+// Objects/Buildable art. The dead have to break them to get past.
+enum BarricadeType : int { BT_WOOD_WALL, BT_WOOD_GATE, BT_REINF_WALL, BT_REINF_GATE, BT_COUNT };
+struct BarricadeDef {
+    const char* name;
+    const char* desc;
+    const char* icon;       // UI/Inventory/Objects
+    int cost, hp;
+    bool gate, reinforced;
+    int unlockHordes;       // hordes repelled before it can be built
+};
+const BarricadeDef& barricadeDef(int type);
+struct Barricade {
+    int dx = 0, dy = 0;     // tile offset from the hatch
+    int type = BT_WOOD_WALL;
+    float hp = -1;          // -1 = full; 0 = broken until repaired
+    float hurtT = 0;        // runtime
+};
+constexpr int MAX_BARRICADES = 60;
+float barricadeMaxHp(const Barricade& b);
+int barricadeRepairCost(const Barricade& b);
 
 enum DefenseUpgrade { DU_FIREPOWER, DU_RATE, DU_PLATING, DU_FORTIFY, DU_BOUNTY, DU_COUNT };
 const UpgradeDef& defenseUpgradeDef(int id);
@@ -125,6 +147,7 @@ struct Hireling {
     // Runtime only.
     Vec2 pos, lastPos, post;
     float angle = 0, fireCd = 0, reloadT = 0, hurtT = 0, flashT = 0, retargetT = 0, stuckT = 0, unstickT = 0;
+    float meleeT = 9;            // 0.12v: since their last punch (the dead too close to shoot)
     Vec2 unstickDir;
     int mag = 0;
     int target = -1;
@@ -264,6 +287,7 @@ struct Profile {
     Item weapons[2];
     Item armor;
     Item backpack;
+    Item melee;                  // 0.12v: the melee slot (the bat); empty = your fists
     int curWeapon = 0;
     float hp = 100;
     int raids = 0, extractions = 0, deaths = 0, kills = 0;
@@ -273,6 +297,7 @@ struct Profile {
     DayMission mission;       // today's mission; rerolled when the day changes
     int missionsCompleted = 0;
     bool laserUnlocked = false;
+    bool autoEquip = true;       // 0.12v: looted guns go straight into an empty gun slot
     bool laserOwned = false;     // 0.11v: has ever had a laser fitted (opens the Laser Focus upgrade)
     bool laserOn = false;        // before 0.7v: one switch for every gun (read from old saves only)
 
@@ -280,6 +305,7 @@ struct Profile {
     // turret unlocks. nextHordeAt is on the absolute clock (see absMinutes), so a
     // horde can be scheduled days ahead.
     std::vector<Turret> turrets;
+    std::vector<Barricade> barricades;   // 0.12v
     bool turretUnlocked[TT_COUNT] = {true, false, false, false, false};
     int defUp[DU_COUNT] = {};
     float baseHp = -1;           // -1 = full
@@ -345,6 +371,13 @@ struct Player {
     float bleedT = 0;          // seconds of bleeding left, 0 = not bleeding
     float bleedImmuneT = 0;    // a fresh dressing holds for a while
     float bleedDripT = 0;
+    // 0.12v: what the body is doing besides running and shooting (Art::Anim Punch,
+    // PickUp; Shoot for the gun's own recoil), and for how long.
+    int act = 0;               // 0 none, 1 shoot, 2 punch/swing, 3 pick up
+    float actT = 9;
+    float meleeCd = 0;
+    float padR3T = -1;         // a controller's R3: tap to hit, hold for the laser
+    bool padR3Held = false;
 };
 
 constexpr float BLEED_CHANCE = 0.07f;      // per bullet that hits you (half with armor on)
@@ -383,6 +416,9 @@ struct Enemy {
     // looks further, so it finds them and answers.
     float provokedT = 0;
     int patrol = -1;           // a city gang on patrol (World::patrols), -1 none
+    // 0.12v: the axe zombie throws its axe, fights bare-handed, and takes it back up.
+    bool noAxe = false;
+    float axeCd = 3, takeT = -1;
 };
 
 struct Bullet {
@@ -511,7 +547,9 @@ void defense_update(float dt);
 void defense_draw();
 // One change to the shared defenses (never touches money). a/b/c: DO_BUILD type,dx,dy;
 // DO_UNLOCK type; DO_RESEARCH upgrade id; DO_UPGRADE/DO_REPAIR/DO_SELL -,dx,dy.
-enum DefenseOp { DO_BUILD, DO_UNLOCK, DO_REPAIR_ALL, DO_RESEARCH, DO_UPGRADE, DO_REPAIR, DO_SELL, DO_REPAIR_BASE };
+// DO_BARR_BUILD type,dx,dy; DO_BARR_SELL/DO_BARR_REPAIR -,dx,dy (0.12v).
+enum DefenseOp { DO_BUILD, DO_UNLOCK, DO_REPAIR_ALL, DO_RESEARCH, DO_UPGRADE, DO_REPAIR, DO_SELL, DO_REPAIR_BASE,
+                 DO_BARR_BUILD, DO_BARR_SELL, DO_BARR_REPAIR, DO_BARR_REPAIR_ALL };
 bool defense_apply(int op, int a, int b, int c);
 
 // The world for today's layout, shared by the raid and the defense editor.
@@ -523,6 +561,10 @@ void placeTurretsInWorld(World& w);
 std::string raid_missedHorde();
 // Primitive-drawn turret art, shared by the raid and the defense editor.
 void drawTurret(const Turret& t, Vec2 tileCenter, float alpha);
+// Where people's feet are this frame (0.12v): the grass under them is drawn trodden.
+void setSteppers(const std::vector<Vec2>& feet);
+// How far open a gate tile is, 0..1 (raid.cpp keeps it moving).
+float gateOpenness(int tx, int ty);
 
 // ---- shared helpers -------------------------------------------------------
 // What you wake up holding after dying (or after abandoning a raid): nothing you
@@ -559,6 +601,7 @@ std::string coopGuestDir();
 void openUrl(const std::string& url);
 bool save_game();
 bool load_game(int slot);
+int last_slot();           // the slot played last, if its save is still there; -1 if not
 bool save_exists(int slot);
 bool delete_save(int slot);
 bool any_save_exists();

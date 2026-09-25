@@ -3,6 +3,7 @@
 #include "assets.h"
 #include "game.h"
 #include "world.h"
+#include <unordered_map>
 
 namespace Atmo {
 
@@ -33,7 +34,7 @@ float s_horde = 0;
 int s_forced = -1;         // dev: pin one preset
 float s_wet = 0;           // how much water is lying around: rises in rain, dries slowly
 float s_stepT = 0;
-struct Splash { Vec2 pos; float t; };
+struct Splash { Vec2 pos; float t; bool small = false; };
 std::vector<Splash> s_splashes;   // footstep splashes in puddles
 
 const char* WATER = "objects/nature/flowers_mashrooms_other-nature-stuff/puddles-and-water-anim/";
@@ -42,18 +43,34 @@ const Assets::Sprite* water(const std::string& name) {
     return Assets::find(std::string(WATER) + name);
 }
 
-// Puddle art per ground: plain for grass, mud for bare earth, dry ground for the rest.
-const Assets::Sprite* puddleArt(int ground, int variant) {
-    static const Assets::Sprite* cache[3][7];
+// Puddle art per ground: on grass the rim takes the grass's own colour (the pack
+// draws each puddle in plain, green, dark green and bleak yellow grass), mud for bare
+// earth, dry ground for the rest.
+const Assets::Sprite* puddleArt(int ground, int variant, int tone) {
+    static const Assets::Sprite* cache[6][7];
     static bool loaded = false;
     if (!loaded) {
         loaded = true;
-        const char* kinds[3] = {"puddle_on-grass_", "puddle_on-mud_", "puddle_on-dry-ground_"};
-        for (int k = 0; k < 3; k++)
-            for (int v = 0; v < 7; v++) cache[k][v] = water(kinds[k] + std::to_string(v + 1));
+        const char* kinds[6] = {"puddle_on-grass_", "puddle_on-mud_", "puddle_on-dry-ground_", "puddle_on-grass_#_grass_green",
+                                "puddle_on-grass_#_grass_dark-green", "puddle_on-grass_#_grass_bleak-yellow"};
+        for (int k = 0; k < 6; k++)
+            for (int v = 0; v < 7; v++) {
+                std::string n = kinds[k];
+                size_t at = n.find('#');
+                if (at == std::string::npos) n += std::to_string(v + 1);
+                else n.replace(at, 1, std::to_string(v + 1));
+                cache[k][v] = water(n);
+            }
     }
-    int k = ground == G_GRASS ? 0 : ground == G_DIRT ? 1 : 2;
-    return cache[k][variant % 7];
+    int k = ground == G_DIRT ? 1 : ground == G_GRASS ? 0 : 2;
+    if (ground == G_GRASS) {
+        // The rim matches the grass: its palette zone, or a mix where it follows the ground.
+        if (tone == TONE_DARK) k = 4;
+        else if (tone == TONE_BLEAK || tone == TONE_ORANGE || tone == TONE_YELLOW || tone == TONE_RED) k = 5;
+        else if (tone == TONE_GREEN || (variant & 8)) k = 3;
+    }
+    const Assets::Sprite* s = cache[k][variant % 7];
+    return s ? s : cache[ground == G_GRASS ? 0 : k][variant % 7];
 }
 
 // True when the tile lies in a building's footprint: dry under its roof.
@@ -69,12 +86,13 @@ bool puddleAt(const World& w, int tx, int ty, float& threshold, int& variant) {
     if (!w.inBounds(tx, ty)) return false;
     const Tile& t = w.at(tx, ty);
     if (t.solid != S_NONE) return false;
-    if (t.ground != G_GRASS && t.ground != G_DIRT && t.ground != G_SAND && t.ground != G_ROAD) return false;
+    if (t.ground != G_GRASS && t.ground != G_DIRT && t.ground != G_SAND && t.ground != G_WASTE && t.ground != G_ROAD &&
+        t.ground != G_PAVEMENT) return false;
     uint32_t h = hash2(tx, ty, (uint32_t)w.seed ^ 0x9D11u);
     if ((h & 0xFFFF) > 0xFFFF * 0.05f) return false;
     if (underRoof(w, tx, ty)) return false;
     threshold = 0.15f + 0.6f * ((h >> 16) & 0xFF) / 255.0f;
-    variant = (int)((h >> 24) % 7);
+    variant = (int)((h >> 24) % 7) | (int)((h >> 20) & 8);
     return true;
 }
 float s_flash = 0, s_boltT = 6;
@@ -268,7 +286,7 @@ void drawGround(const World& w, Vec2 cam) {
             if (!puddleAt(w, tx, ty, th, v)) continue;
             float a = clampf((s_wet - th) * 4.0f, 0, 1);
             if (a <= 0) continue;
-            const Assets::Sprite* art = puddleArt(w.at(tx, ty).ground, v);
+            const Assets::Sprite* art = puddleArt(w.at(tx, ty).ground, v, w.at(tx, ty).tone);
             if (!art) continue;
             uint32_t h = hash2(tx, ty, 0x51u);
             Vec2 c = World::tileCenter(tx, ty) + Vec2((float)(h % 7) - 3.0f, (float)((h >> 4) % 5) - 2.0f);
@@ -287,12 +305,16 @@ void drawGround(const World& w, Vec2 cam) {
                 }
             }
         }
+    // Your own steps squash the water out; everyone else's (the dead, your mercs)
+    // leave the small splash.
     const Assets::Sprite* kick = water("animations/puddle-splash_2_squished");
-    if (kick)
-        for (const Splash& sp : s_splashes) {
-            int fr = std::min(kick->frameCount() - 1, (int)(sp.t / 0.4f * kick->frameCount()));
-            R::spriteAt(*kick, fr, sp.pos, R::Pivot::Center, 1, Color(1, 1, 1, 0.9f));
-        }
+    const Assets::Sprite* flick = water("animations/puddle-splash_1_small");
+    for (const Splash& sp : s_splashes) {
+        const Assets::Sprite* a = sp.small && flick ? flick : kick;
+        if (!a) continue;
+        int fr = std::min(a->frameCount() - 1, (int)(sp.t / 0.4f * a->frameCount()));
+        R::spriteAt(*a, fr, sp.pos, R::Pivot::Center, 1, Color(1, 1, 1, 0.9f));
+    }
 }
 
 Vec2 nearestPuddle(const World& w, Vec2 from) {
@@ -319,6 +341,23 @@ void footstep(const World& w, Vec2 feet, bool moving, float dt) {
     s_stepT = 0.28f;
     s_splashes.push_back({feet, 0});
     Audio::play(Snd::splash, 0.8f, 0.9f + 0.2f * hashf((uint64_t)(feet.x * 13), (uint64_t)(feet.y * 7)));
+}
+
+// Someone else walking through a puddle (0.12v): a small splash, now and then.
+void otherStep(const World& w, Vec2 feet, uint32_t who) {
+    if (s_wet < 0.05f || s_splashes.size() > 48) return;
+    float th;
+    int v;
+    int tx = World::toTile(feet.x), ty = World::toTile(feet.y);
+    if (!puddleAt(w, tx, ty, th, v) || s_wet < th + 0.05f) return;
+    if (dist(feet, World::tileCenter(tx, ty)) > 10) return;
+    // About three a second each, spread over time by who it is.
+    float slot = G.realTime * 3.0f + (who % 97) * 0.173f;
+    static std::unordered_map<uint32_t, int> last;
+    int n = (int)slot;
+    if (last[who] == n) return;
+    last[who] = n;
+    s_splashes.push_back({feet, 0, true});
 }
 
 void drawRain(const World& w, Vec2 cam) {
@@ -348,6 +387,13 @@ void drawRain(const World& w, Vec2 cam) {
     const float padX = 80, padY = 80;
     float boxW = W + padX * 2, boxH = H + padY * 2;
     Vec2 dir = normalize(Vec2(0.22f + rain * 0.15f, 1.0f));
+    static const char* const DROPS[4] = {"rain-drop_2_long_blue", "rain-drop_2_long_white", "rain-drop_1_blue", "rain-drop_1_white"};
+    static const Assets::Sprite* dropArt[4] = {};
+    static bool dropsLooked = false;
+    if (!dropsLooked) {
+        dropsLooked = true;
+        for (int k = 0; k < 4; k++) dropArt[k] = Assets::find(std::string("objects/nature/flowers_mashrooms_other-nature-stuff/") + DROPS[k]);
+    }
     int n = (int)(rain * 420);
     for (int i = 0; i < n; i++) {
         float speed = 240.0f + 120.0f * hashf(i, 3);
@@ -360,8 +406,16 @@ void drawRain(const World& w, Vec2 cam) {
         Vec2 p(camF.x + x - padX, camF.y + y - padY);
         float keep = shelter(p, false);
         if (keep <= 0.02f) continue;
-        float len = 4.0f + 4.0f * hashf(i, 4) + rain * 2.0f;
-        R::line(p - dir * len, p, 1, pal(P_BLUE, (0.28f + 0.25f * rain) * keep));
+        // The pack's drops: mostly the long streak, some short, blue and white.
+        float a = (0.35f + 0.3f * rain) * keep;
+        const Assets::Sprite* drop = dropArt[(hashf(i, 5) < 0.7f ? 0 : 2) + (hashf(i, 6) < 0.6f ? 0 : 1)];
+        if (drop) {
+            const Assets::Frame& f = drop->frame(0);
+            R::frame(f, std::floor(p.x), std::floor(p.y - f.h), (float)f.w, (float)f.h, Color(1, 1, 1, a), false, -std::atan2(dir.x, dir.y));
+        } else {
+            float len = 4.0f + 4.0f * hashf(i, 4) + rain * 2.0f;
+            R::line(p - dir * len, p, 1, pal(P_BLUE, a * 0.8f));
+        }
     }
 
     // Where drops hit open ground they splash: the pack's own splash animations.

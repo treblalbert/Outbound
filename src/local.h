@@ -72,8 +72,31 @@ bool groupBox(Vec2& lo, Vec2& hi, int skipSeat = -1);
 Vec2 leash(Vec2 from, Vec2 to);
 float maxZoom();                   // 1 when the zoom-out option is off
 
+// ---- the lobby (0.12v): before a game starts, players claim a device and a shirt.
+// Pads join with A or START and leave with B; the keyboard joins with ENTER and leaves
+// with BACKSPACE; left/right changes the shirt. Player 1 (the first to join) starts
+// with START / ENTER. The lobby's seats join by themselves once the save is loaded.
+struct LobbySeat { bool used = false; int device = -1; int shirt = 0; };
+void lobbyOpen();
+void lobbyClose();
+// Reads everybody's devices; true when player 1 asked to start (2+ players).
+bool lobbyUpdate();
+const LobbySeat& lobbySeat(int k);
+void lobbyJoinKeyboard();         // the keyboard and mouse take a place (the lobby's mouse button)
+int lobbyCount();
+bool lobbyReady();                 // enough players to start
+// Keeps the lobby's seats for the game about to be loaded (planPending), then, in the
+// bunker or outside, has them join (applyPlan, called by main).
+void lobbyCommit();
+bool planPending();
+void applyPlan();
+void cancelPlan();
+
 // ---- UI helpers
 // "P2" style tags, colours and the hint for joining (drawn by the bunker and pause).
 std::string joinHint();
+// Dev (--local=N): a session of N players, the extra ones on controller slots 0.., spread
+// a little apart (screenshots of the shared camera and the player cards).
+void devSeats(int n);
 
 }  // namespace Local

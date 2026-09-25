@@ -21,6 +21,8 @@ void shutdown();
 // Pumps Steam callbacks and incoming messages. Call once per frame.
 void update();
 
+// Starts Steam if it has not been (online co-op only: see net.cpp).
+void ensureSteam();
 bool steamAvailable();
 uint64_t myId();
 std::string myName();
