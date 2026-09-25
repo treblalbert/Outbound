@@ -192,6 +192,12 @@ OUTBOUND - DEVLOG (0.11v)
 
 
 
+·FIXES
+
+- A stack of 9mm rounds over 60 (easy to reach in the stash) turned into the .338 icon. Big stacks used to swap to the pack's ammo crates, but the blue crate is already the .338 icon (and the red one the rocket's). Every kind of round keeps its own icon now.
+
+
+
 ·THE MELEE SLOT, AND STEAM LETTING GO OF THE CONTROLLER
 
 - The inventory has a MELEE slot beside the two guns. The bat (and any melee weapon to come) goes there like a gun goes in its slot, and only a weapon in that slot is swung; without one you punch. It is kept, saved and can be lost on death like the rest of your gear. The auto-equip box covers it too.
@@ -242,7 +248,7 @@ OUTBOUND - DEVLOG (0.11v)
 - Guns kick with their shoot animation, and the shotgun pumps after every shot.
 - Spent casings fly out of the side of every gun, bounce, and lie on the ground for a while: small ones for pistols and SMGs, long ones for rifles, red shells from a shotgun.
 - You bend down (the pick-up animation) to search a container and to take everything.
-- Canned Soup is a new trade good. Big stacks of ammo show as the pack's ammo crates instead of boxes.
+- Canned Soup is a new trade good.
 
 
 

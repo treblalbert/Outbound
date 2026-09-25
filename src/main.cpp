@@ -29,6 +29,7 @@
 #endif
 
 static void devBarricades(int argc, char** argv);
+void raid_devExtract();
 
 std::string g_dataDir;
 std::string g_saveDir;
@@ -133,6 +134,7 @@ static bool g_devNoGrain = false;   // --nograin
 static int g_devMoney = -1;         // --money=N: start with that much (trailer shots)
 static int g_devCoopCrypt = 0;      // --coop-crypt=1|2|3: once out, go to the catacomb gate (see raid_devCrypt)
 static bool g_devBot = false;       // --bot
+static float g_devExtractAt = -1;   // --extract=SECONDS: go home through the hatch then
 static bool g_devBotFar = false;    // --bot-far: walk off in a straight line instead
 static float g_devStashOpen = -1;   // --stash-open=SECONDS: open the stash panel then
 static float g_devStashPut = -1;    // --stash-put=SECONDS: put everything carried in the shared stash, then close it
@@ -208,6 +210,7 @@ static void applyDevArgs(int argc, char** argv) {
         if (a.rfind("--go-out=", 0) == 0) g_devGoOut = (float)std::atof(a.c_str() + 9);
         if (a.rfind("--coop-crypt=", 0) == 0) g_devCoopCrypt = std::atoi(a.c_str() + 13);
         if (a == "--bot") g_devBot = true;
+        if (a.rfind("--extract=", 0) == 0) g_devExtractAt = (float)std::atof(a.c_str() + 10);
         if (a == "--bot-far") g_devBot = g_devBotFar = true;
         if (a.rfind("--stash-open=", 0) == 0) g_devStashOpen = (float)std::atof(a.c_str() + 13);
         if (a.rfind("--stash-put=", 0) == 0) g_devStashPut = (float)std::atof(a.c_str() + 12);
@@ -611,6 +614,10 @@ void frame() {
                 G.panel = Panel::None;
             }
         }
+    }
+    if (g_devExtractAt >= 0 && G.scene == Scene::Raid && G.realTime >= g_devExtractAt) {
+        g_devExtractAt = -1;
+        raid_devExtract();
     }
     if (g_devZombiesAt >= 0 && G.scene == Scene::Raid && G.realTime >= g_devZombiesAt) {
         g_devZombiesAt = -1;

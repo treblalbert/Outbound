@@ -36,7 +36,6 @@ std::vector<const Sprite*> g_buildingWalls;
 const Sprite* g_wallWood = nullptr;
 const Sprite* g_wallMetal = nullptr;
 const Sprite* g_itemIcons[IT_COUNT] = {};
-const Sprite* g_itemCrates[IT_COUNT] = {};
 bool g_packLoaded = false;
 
 const char* DIR_NAME[4] = {"down", "up", "side", "side-left"};
@@ -528,13 +527,9 @@ void loadIcons() {
     set(IT_SCRAP, "icon_rock");
     set(IT_BAT, "icon_bat");
     set(IT_SOUP, "icon_canned-soup");
-    // A big pile of rounds shows as a crate rather than a box (0.12v).
-    auto crate = [&](int item, const char* key) {
-        if (const Sprite* s = Assets::find(std::string("ui/inventory/objects/") + key)) g_itemCrates[item] = s;
-    };
-    crate(IT_AMMO_LIGHT, "icon_bullet-crate_blue");
-    crate(IT_AMMO_SHELL, "icon_bullet-crate_red");
-    crate(IT_AMMO_RIFLE, "icon_bullet-crate_green");
+    // (0.12v tried showing a big stack of rounds as a crate, but the pack's blue and red
+    // crates are already the .338 and rocket icons: a stack of 9mm turned into .338.
+    // Every kind of round keeps its own icon.)
 }
 
 }  // namespace
@@ -1295,7 +1290,7 @@ Piece bulletSprite(int weaponItem) {
 
 const Assets::Sprite* itemIcon(int itemId, int count) {
     if (itemId <= IT_NONE || itemId >= IT_COUNT) return nullptr;
-    if (count > 0 && g_itemCrates[itemId] && count * 2 > itemDef(itemId).stack) return g_itemCrates[itemId];
+    (void)count;
     return g_itemIcons[itemId];
 }
 

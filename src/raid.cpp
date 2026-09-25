@@ -8356,3 +8356,10 @@ void raid_localEnded() {
 }
 
 float gateOpenness(int tx, int ty) { return gateOpenAt(tx, ty); }
+
+// --extract=SECONDS (dev): through the hatch, as if E had been pressed on it.
+void raid_devExtract() {
+    if (G.scene != Scene::Raid) return;
+    if (Local::active()) Local::atHome([] { localExtract(); });
+    else extract();
+}
