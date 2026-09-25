@@ -229,9 +229,8 @@ OUTBOUND - DEVLOG (0.11v)
 - Grass tufts are trodden flat under whoever stands in them.
 - Fixed: a lone tile of lawn on bare ground showed as a flat green square.
 - Vans and buses now also come in the pack's light green, and rusted wrecks in dark blue.
-- The HUD's heart empties as your health does, and stamina is the pack's hunger bar, its drumstick going as you tire. Co-op teammates' health shows as hearts in the team list, and your own as hearts on the inventory and in the bunker's top bar.
+- The HUD's heart empties as your health does. Co-op teammates' health shows as hearts in the team list, and your own as hearts on the inventory and in the bunker's top bar.
 - A pistol or shotgun magazine shows round by round with the pack's big bullet indicators when it fits.
-- A quick-access bar (the pack's) along the bottom of the screen: both guns, the one in your hands picked out, then grenades, bandages, medkits and the bat, with how many.
 - Something dropped on its own lies on the ground as itself: a box of rounds, a bandage, a tin of food or soup, a pistol, a shotgun, a rifle, a bat.
 - Continue on the main menu (the pack's Load button) goes straight back into the save you played last.
 - The trader's stock and the credits scroll with the pack's scroll bar; the mechanic lists a car's parts as a crafting line.

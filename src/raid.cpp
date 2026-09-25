@@ -5641,15 +5641,13 @@ static bool hudArt(const char* key, float x, float y, float frac = 1, Color c = 
     return true;
 }
 
-// The pack's heart (hp) or drumstick (hunger) icon for how full something is: whole,
-// half or empty, drawn over the icon end of its bar.
-static const char* fullnessIcon(bool heart, bool small, float frac) {
+// The pack's heart icon for how full your health is: whole, half or empty, drawn over
+// the heart end of its bar.
+static const char* fullnessIcon(bool small, float frac) {
     int k = frac >= 0.6f ? 0 : frac >= 0.25f ? 1 : 2;
     static const char* H[2][3] = {{"hp/heart_full", "hp/heart_half", "hp/heart_empty"},
                                   {"hp/small/heart_small_full", "hp/small/heart_small_half", "hp/small/heart_small_empty"}};
-    static const char* F[2][3] = {{"hunger/hunger_full", "hunger/hunger_half", "hunger/hunger_empty"},
-                                  {"hunger/small/hunger_small_full", "hunger/small/hunger_small_half", "hunger/small/hunger_small_empty"}};
-    return heart ? H[small][k] : F[small][k];
+    return H[small][k];
 }
 
 // A row of `n` small hearts for a health fraction, each whole, half or empty.
@@ -5827,11 +5825,9 @@ static void drawSeatCard(int k, float x, float y, float w) {
     R::rect(hx + 11, hy + 5, 40, 2, pal(P_DARK));
     if (!(hudArt("hp/small/hp_small", hx + 8, hy + 5, (3 + 40 * hpFrac) / 43.0f) && hudArt("hp/small/hp-bar_small", hx, hy)))
         UI::bar(hx, hy + 3, 52, 4, hpFrac, P_CORAL);
-    else hudArt(fullnessIcon(true, true, hpFrac), hx, hy);
+    else hudArt(fullnessIcon(true, hpFrac), hx, hy);
     R::text(std::to_string((int)std::ceil(p.hp)), hx + 56, hy + 2, pal(P_CORAL));
     UI::bar(hx + 11, hy + 11, 40, 2, pl.stamina / p.maxStamina(), P_YGREEN);
-    // The small drumstick for stamina (0.12v), tucked under the heart.
-    hudArt(fullnessIcon(false, true, pl.stamina / p.maxStamina()), hx + 1, hy + 8);
     if (!p.armor.empty()) UI::bar(hx + 11, hy + 14, 40, 2, p.armor.data / float(itemDef(p.armor.id).param), P_BLUE);
     if (s_downT >= 0) {
         bool on = std::fmod(G.realTime, 0.8f) < 0.5f;
@@ -5893,7 +5889,7 @@ void drawHUD() {
     R::rect(6 + 13, 6 + 4, 40, 4, pal(P_DARK, 0.85f));
     if (hudArt("hp/hp", 6 + 10, 6 + 4, (3 + 40 * hpFrac) / 43.0f) && hudArt("hp/hp-bar", 6, 6)) {
         barX = 6 + 13; barW = 40; textX = 6 + 58;
-        hudArt(fullnessIcon(true, false, hpFrac), 6, 6);   // the heart empties with you
+        hudArt(fullnessIcon(false, hpFrac), 6, 6);   // the heart empties with you
         if (pl.bleedT > 0) R::rectOutline(6 + 12, 6 + 3, 42, 6, pal(P_CORAL, bleedOn ? 1.0f : 0.3f));
     } else {
         UI::bar(8, 8, 90, 7, hpFrac, P_CORAL);
@@ -5908,16 +5904,8 @@ void drawHUD() {
         R::rectOutline(barX - 1, yy - 1, barW + 2, 6, pal(P_DARK));
         yy += 7;
     }
-    // Stamina: the pack's hunger bar, its drumstick going as you tire (0.12v).
-    float stFrac = clampf(pl.stamina / p.maxStamina(), 0, 1);
-    R::rect(6 + 12, yy + 2, 36, 2, pal(P_DARK, 0.85f));
-    if (barW == 40 && hudArt("hunger/hunger", 6 + 11, yy + 2, stFrac, pl.exhausted ? pal(P_CORAL) : Color()) && hudArt("hunger/hunger-bar", 6, yy - 4)) {
-        hudArt(fullnessIcon(false, false, stFrac), 6, yy - 4);
-        yy += 8;
-    } else {
-        UI::bar(barX, yy, barW, 3, pl.stamina / p.maxStamina(), P_YGREEN);
-        R::rectOutline(barX - 1, yy - 1, barW + 2, 5, pal(P_DARK));
-    }
+    UI::bar(barX, yy, barW, 3, pl.stamina / p.maxStamina(), P_YGREEN);
+    R::rectOutline(barX - 1, yy - 1, barW + 2, 5, pal(P_DARK));
     if (s_hordeActive || p.baseHp < baseMaxHp()) {
         yy += 6;
         bool hit = s_hordeActive && std::fmod(G.realTime, 0.6f) < 0.3f && p.baseHp < baseMaxHp() * 0.35f;
@@ -6085,27 +6073,6 @@ void drawHUD() {
         if (!w.empty() && weaponDef(w.id) && w.data == 0 && G.player.reloadT <= 0)
             Prompt::label(Prompt::Reload, T("Reload"), hx, hy, pal(P_CORAL, 0.6f + 0.4f * std::sin(G.realTime * 6.0f)));
     }
-        // The quick-access bar (UI/Inventory/Quick-Access-Inventory, 0.12v) along the
-        // bottom: both guns (the one in your hands chosen), then what you throw, heal
-        // with and swing, with how many.
-        if (const Assets::Sprite* qa = Assets::find("ui/inventory/quick-access-inventory")) {
-            float qx = std::floor(W / 2 - qa->w / 2.0f), qy = H - qa->h - 4;
-            hudFade(HUD_WEAPON, qx, qy, (float)qa->w, (float)qa->h);
-            R::frame(qa->frame(0), qx, qy, (float)qa->w, (float)qa->h);
-            const int ids[6] = {p.weapons[0].id, p.weapons[1].id, IT_GRENADE, IT_BANDAGE, IT_MEDKIT, p.melee.id};
-            for (int i = 0; i < 6; i++) {
-                float cx = qx + i * 21.0f;
-                if (i < 2 && i == p.curWeapon && !p.weapons[i].empty()) hudArt("inventory/inventory-chosen", cx, qy);
-                int id = ids[i];
-                if (id == IT_NONE) continue;
-                int n = i < 2 || i == 5 ? 1 : countInSlots(p.inv, id, cap);
-                UI::itemIcon(id, cx + 2, qy + 2, 15, n > 0 ? Color() : Color(1, 1, 1, 0.3f));
-                if (i >= 2 && i < 5 && n > 0) {
-                    std::string c = std::to_string(n);
-                    R::textShadow(c, cx + 18 - R::textWidth(c), qy + 11, pal(P_WHITE));
-                }
-            }
-        }
     }   // !driving
 
     // Minimap.
