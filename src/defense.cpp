@@ -455,6 +455,7 @@ void defense_enter() {
     if (!raid_worldLive()) {
         World::zombieSpawns = G.prof.zombieMode();
         World::withCrypts = true;
+        World::airdrops = G.prof.radioFixed;
         G.world.generate(todaySeed(), G.prof.day);
         placeTurretsInWorld(G.world);
     }

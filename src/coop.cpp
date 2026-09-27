@@ -135,6 +135,7 @@ void writeWorld(Net::Writer& w) {
         w.u8((uint8_t)b.type);
         w.f32(b.hp);
     }
+    w.u8(p.radioFixed ? 1 : 0);   // 0.13v
 }
 
 void readWorld(Net::Reader& r) {
@@ -177,7 +178,9 @@ void readWorld(Net::Reader& r) {
         b.hp = r.f32();
         barricades.push_back(b);
     }
+    bool radio = r.u8() != 0;
     if (r.bad) return;
+    p.radioFixed = radio;
     bool newWorld = day != p.day || rev != p.dayRev || seed != p.worldSeed;
     p.day = day;
     p.dayRev = rev;

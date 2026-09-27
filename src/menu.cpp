@@ -603,7 +603,7 @@ void menu_devScreen(const std::string& name) {
 void menu_init() {
     G.scene = Scene::Menu;
     G.panel = Panel::None;
-    World::withCrypts = World::zombieSpawns = false;
+    World::withCrypts = World::zombieSpawns = World::airdrops = false;
     G.menuWorld.generate((uint64_t)time(nullptr) * 2654435761ull, 1);
     G.cam = G.menuWorld.homePos - Vec2(R::width() / 2.0f, R::height() / 2.0f) + Vec2(-300, -200);
     s_menuClock = 8 * 60;

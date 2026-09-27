@@ -1085,7 +1085,7 @@ void spawnBullets(Vec2 origin, float angle, const WeaponDef& wd, int weaponId, f
 }
 
 // ---------------------------------------------------------------- interaction
-enum class Interact { None, Container, Hatch, Door, Revive, CryptDoor, CryptExit, CryptGate, Mechanic, Car, Refuel, Stairs };
+enum class Interact { None, Container, Hatch, Door, Revive, CryptDoor, CryptExit, CryptGate, Mechanic, Car, Refuel, Stairs, Radio, Medic, Buyer };
 
 int doorStateNear(Vec2 pos, float radius) {
     int cx = World::toTile(pos.x), cy = World::toTile(pos.y);
@@ -1204,6 +1204,64 @@ std::vector<InteractOpt> s_interOpts;
 int s_interSel = 0;          // index into s_interOpts
 int s_interSelKey = -1;      // what is selected, so the choice survives re-sorting
 
+// ---- the radio hill (0.13v)
+constexpr int RADIO_BOARDS = 2, RADIO_WIRES = 3, RADIO_BATTERIES = 1;
+constexpr int MEDIC_PRICE = 150;
+constexpr float BUYER_RATE = 1.3f;
+bool buyerWants(int id) { return id == IT_WATCH || id == IT_GPU || id == IT_JEWELRY || id == IT_INTEL; }
+
+// Mend the tower: two circuit boards, three coils of wire and a battery. From the next
+// day on a supply drop comes down somewhere on the open land.
+void useRadio() {
+    Profile& p = G.prof;
+    int cap = p.invCapacity();
+    int b = countInSlots(p.inv, IT_CIRCUIT, cap), wi = countInSlots(p.inv, IT_WIRES, cap), ba = countInSlots(p.inv, IT_BATTERY, cap);
+    if (b < RADIO_BOARDS || wi < RADIO_WIRES || ba < RADIO_BATTERIES) {
+        pushMessage(T1("The tower is dead. To mend it: {0}.", T("2 Circuit Boards, 3 Copper Wires and a Battery")), P_BEIGE);
+        sfx(Snd::click, 0.5f, 0.7f);
+        return;
+    }
+    takeFromSlots(p.inv, IT_CIRCUIT, RADIO_BOARDS, cap);
+    takeFromSlots(p.inv, IT_WIRES, RADIO_WIRES, cap);
+    takeFromSlots(p.inv, IT_BATTERY, RADIO_BATTERIES, cap);
+    p.radioFixed = true;
+    if (isGuest()) {
+        Net::Writer w;
+        w.u8(Coop::M_RADIO_FIX);
+        Coop::toHost(w, true);
+    }
+    pushMessage(T("The tower crackles back to life. It will catch a supply drop every day from tomorrow."), P_YGREEN);
+    sfx(Snd::heal, 0.7f, 0.6f);
+}
+
+// The medic patches you up for a price: all your health back, the bleeding stopped.
+void useMedic() {
+    Profile& p = G.prof;
+    if (p.hp >= p.maxHp() - 0.5f && G.player.bleedT <= 0) { pushMessage(T("\"You look fine to me.\""), P_BEIGE); return; }
+    if (p.money < MEDIC_PRICE) { pushMessage(T1("\"Patching you up costs ${0}. Come back with it.\"", std::to_string(MEDIC_PRICE)), P_BEIGE); return; }
+    p.money -= MEDIC_PRICE;
+    p.hp = p.maxHp();
+    G.player.bleedT = 0;
+    sfx(Snd::heal, 0.8f);
+    pushMessage(T1("The medic patched you up (${0}).", std::to_string(MEDIC_PRICE)), P_YGREEN);
+}
+
+// The buyer takes watches, jewelry, graphics cards and intel drives, and pays more for
+// them than the trader at home.
+void useBuyer() {
+    Profile& p = G.prof;
+    int total = 0;
+    for (Item& it : p.inv) {
+        if (it.empty() || !buyerWants(it.id)) continue;
+        total += (int)std::round(itemDef(it.id).value * BUYER_RATE) * std::max(1, (int)it.count);
+        it = Item();
+    }
+    if (total == 0) { pushMessage(T("\"Watches, jewelry, graphics cards, intel. Bring me those.\""), P_BEIGE); return; }
+    p.money += total;
+    sfx(Snd::sell, 0.9f);
+    pushMessage(T1("Sold your valuables to the buyer for ${0}.", std::to_string(total)), P_YELLOW);
+}
+
 void gatherInteract() {
     s_interOpts.clear();
     Player& pl = G.player;
@@ -1219,6 +1277,13 @@ void gatherInteract() {
             if (c.owner == mySlot() && c.fuel < carModel(c.model).tank - 1 && countInSlots(G.prof.inv, IT_FUEL, G.prof.invCapacity()) > 0)
                 s_interOpts.push_back({Interact::Refuel, -1, dist(pl.pos, c.pos)});
         }
+        // The radio hill (0.13v): the tower's console, the survivors' medic and buyer.
+        const World& w = G.world;
+        if (w.radioPos.x > 0 && !G.prof.radioFixed && dist(pl.pos, w.radioPos) < 24) s_interOpts.push_back({Interact::Radio, -1, dist(pl.pos, w.radioPos)});
+        if (w.medicPos.x > 0 && w.unlockedAt(World::toTile(w.medicPos.x), World::toTile(w.medicPos.y)) && dist(pl.pos, w.medicPos) < 24)
+            s_interOpts.push_back({Interact::Medic, -1, dist(pl.pos, w.medicPos)});
+        if (w.buyerPos.x > 0 && w.unlockedAt(World::toTile(w.buyerPos.x), World::toTile(w.buyerPos.y)) && dist(pl.pos, w.buyerPos) < 24)
+            s_interOpts.push_back({Interact::Buyer, -1, dist(pl.pos, w.buyerPos)});
         // Stairs between the floors of a city building.
         for (int i = 0; i < (int)G.world.stairs.size(); i++) {
             float d = dist(pl.pos, G.world.stairs[i].at);
@@ -4311,6 +4376,7 @@ static void beginRaid(bool resume) {
     s_rng = Rng(seed ^ 0xABCDEF);
     World::zombieSpawns = p.zombieMode();
     World::withCrypts = true;
+    World::airdrops = p.radioFixed;
     G.world.generate(seed, p.day);
     placeTurretsInWorld(G.world);
     s_gateT.clear();
@@ -4357,6 +4423,11 @@ static void beginRaid(bool resume) {
             Enemy& ne = G.enemies.back();
             ne.spawnIdx = (int)i;
             ne.patrol = sp.patrol;
+            if (sp.boss && ne.type == EnemyType::Zombie) {
+                // The metro's brute (0.13v): the biggest of them all.
+                ne.zkind = 1; ne.artVariant = 1; ne.infect = 3; ne.boss = true; ne.noAxe = false;
+                ne.hp = ne.maxHp = zombieStats(1, 3).hp * 5.0f * (1.0f + (p.day - METRO_DAY) * 0.08f);
+            }
             if (sp.crypt) {
                 // The catacombs' own: tougher, and better armed.
                 float tier = cryptTier(p.day);
@@ -4459,7 +4530,10 @@ static void beginRaid(bool resume) {
     // Your car, where you left it (or at the mechanic's), and the mechanic himself.
     spawnMyCar();
     resetMechanic();
-    if (!resume) announceUnlocks();
+    if (!resume) {
+        announceUnlocks();
+        if (G.world.dropPos.x > 0) pushMessage(T("The radio caught a supply drop coming down. It is marked on your map."), P_CORAL);
+    }
     Atmo::reset();
     bigText(T("DAY") + " " + std::to_string(p.day) + " - " + fmtTime(p.timeMin), P_WHITE, 3);
     if (resume) {
@@ -4844,6 +4918,12 @@ static bool playerActions(float dt, bool paused, bool worldCars) {
         } else if (inter == Interact::Stairs) {
             if (Local::active()) groupTravel([cidx] { useStairs(cidx); });
             else useStairs(cidx);
+        } else if (inter == Interact::Radio) {
+            useRadio();
+        } else if (inter == Interact::Medic) {
+            useMedic();
+        } else if (inter == Interact::Buyer) {
+            useBuyer();
         }
         else if (inter == Interact::Hatch) {
             if (hatchSealed()) {
@@ -5091,6 +5171,8 @@ static void localRaidUpdate(float dt) {
     uploadMap(dt);
 }
 
+namespace { void dropSmoke(float dt); }
+
 // Walk up to a closed bridge (0.13v) and you are told when it opens.
 void roadblockHint(float dt) {
     static float cool = 0;
@@ -5168,6 +5250,7 @@ void raid_update(float dt) {
     updateGrenades(dt);
     updateEffects(dt);
     roadblockHint(dt);
+    dropSmoke(dt);
 
     // Camera with a little look-ahead toward the cursor.
     Vec2 screen(R::viewW() / 2.0f, R::viewH() / 2.0f);
@@ -5390,6 +5473,66 @@ void drawMechanic() {
     if (!mechanicOut()) return;
     bool moving = lengthSq(s_mechPos - s_mechLast) > 0.01f;
     drawCharacter(PLAYER, s_mechPos, s_mechAngle, IT_NONE, false, moving, G.realTime * 0.8f, false, false, 1, Color(), false, 3);
+}
+
+// ---- the radio hill (0.13v): the tower, drawn; the survivors; the supply drop's smoke.
+void drawRadioHill() {
+    const World& w = G.world;
+    if (w.radioPos.x > 0) {
+        Vec2 foot = w.radioPos + Vec2(0, -26);
+        const float H = 118, base = 30, top = 6;
+        Color steel(0.55f, 0.56f, 0.6f), dark(0.32f, 0.33f, 0.37f);
+        R::rect(foot.x - base * 0.5f - 2, foot.y - 2, base + 4, 5, Color(0, 0, 0, 0.3f));
+        Vec2 l0(foot.x - base * 0.5f, foot.y), l1(foot.x - top * 0.5f, foot.y - H), r0(foot.x + base * 0.5f, foot.y), r1(foot.x + top * 0.5f, foot.y - H);
+        R::line(l0, l1, 2, steel);
+        R::line(r0, r1, 2, steel);
+        // The lattice between the legs.
+        for (int i = 0; i < 8; i++) {
+            float a = i / 8.0f, b = (i + 1) / 8.0f;
+            Vec2 la = l0 + (l1 - l0) * a, lb = l0 + (l1 - l0) * b, ra = r0 + (r1 - r0) * a, rb = r0 + (r1 - r0) * b;
+            R::line(la, rb, 1, dark);
+            R::line(ra, lb, 1, dark);
+            R::line(lb, rb, 1, steel);
+        }
+        // The dish and the aerial, and the light on top: dead, or blinking once mended.
+        R::rect(foot.x + 3, foot.y - H * 0.7f, 7, 7, steel);
+        R::rect(foot.x + 4, foot.y - H * 0.7f + 1, 5, 5, dark);
+        R::line(Vec2(foot.x, foot.y - H), Vec2(foot.x, foot.y - H - 16), 1, steel);
+        bool on = G.prof.radioFixed && std::fmod(G.realTime, 1.4f) < 0.7f;
+        R::rect(foot.x - 1, foot.y - H - 18, 3, 3, on ? Color(1.0f, 0.2f, 0.15f) : Color(0.3f, 0.1f, 0.1f));
+        // The console at its foot.
+        R::rect(w.radioPos.x - 5, w.radioPos.y - 10, 10, 9, Color(0.28f, 0.3f, 0.3f));
+        R::rect(w.radioPos.x - 4, w.radioPos.y - 9, 8, 3, G.prof.radioFixed ? Color(0.4f, 0.9f, 0.5f) : Color(0.15f, 0.2f, 0.18f));
+    }
+    auto open = [&](Vec2 p) { return p.x > 0 && w.unlockedAt(World::toTile(p.x), World::toTile(p.y)); };
+    if (open(w.medicPos)) drawCharacter(PLAYER, w.medicPos, PI / 2, IT_NONE, false, false, G.realTime * 0.8f, false, false, 1, Color(), false, 1);
+    if (open(w.buyerPos)) drawCharacter(PLAYER, w.buyerPos, PI / 2, IT_NONE, false, false, G.realTime * 0.8f + 0.4f, false, false, 1, Color(), false, 2);
+}
+void drawRadioHillTags() {
+    const World& w = G.world;
+    auto tag = [&](Vec2 p, const std::string& name, const std::string& role, int col) {
+        if (p.x <= 0 || !w.unlockedAt(World::toTile(p.x), World::toTile(p.y))) return;
+        R::textShadow(name, std::floor(p.x - R::textWidth(name) / 2), p.y - 27, pal(col));
+        R::text(role, std::floor(p.x - R::textWidth(role) / 2), p.y - 19, pal(P_TAN, 0.85f));
+    };
+    tag(w.medicPos, "Doc", T("MEDIC"), P_YGREEN);
+    tag(w.buyerPos, "Marta", T("BUYER"), P_YELLOW);
+}
+void dropSmoke(float dt) {
+    static float t = 0;
+    Vec2 d = G.world.dropPos;
+    if (d.x <= 0 || dist(d, G.player.pos) > 700) return;
+    t -= dt;
+    if (t > 0) return;
+    t = 0.08f;
+    Particle q;
+    q.pos = d + Vec2(s_rng.range(-3, 3), -6);
+    q.vel = Vec2(s_rng.range(-6, 6), s_rng.range(-34, -22));
+    q.life = q.maxLife = s_rng.range(1.6f, 2.6f);
+    q.size = s_rng.range(2, 4);
+    q.drag = 0.4f;
+    q.color = s_rng.chance(0.6f) ? P_CORAL : P_ORANGE;
+    G.particles.push_back(q);
 }
 
 void drawMechanicTag() {
@@ -5685,7 +5828,7 @@ void drawZombie(const Enemy& e, float animTime) {
     static const Color INFECT[4] = {Color(), Color(0.72f, 1.0f, 0.7f), Color(1.0f, 1.0f, 0.5f), Color(1.0f, 0.62f, 0.58f)};
     Color it = INFECT[e.infect & 3];
     tint = Color(tint.r * it.r, tint.g * it.g, tint.b * it.b, tint.a);
-    float scale = kind == 1 ? (e.infect == 3 ? 1.4f : 1.15f) : 1.0f;
+    float scale = e.boss ? 2.0f : kind == 1 ? (e.infect == 3 ? 1.4f : 1.15f) : 1.0f;
     if (z.valid()) sceneAdd(z, base, tint, scale);
     else sceneAddSprite(SHADE, e.pos, tint);
 }
@@ -5837,6 +5980,7 @@ static void drawPlayerPrompts(float W, float H, Vec2 at) {
             if (o.kind == Interact::CryptDoor) {
                 if (G.prof.cryptBanned(o.container)) { color = P_CORAL; return T("The catacombs (closed to you today)"); }
                 color = P_ORANGE;
+                if (o.container >= 0 && o.container < (int)G.world.dungeons.size() && G.world.dungeons[o.container].metro) return T("Go down into the metro");
                 return T("Go down into the catacombs");
             }
             if (o.kind == Interact::CryptExit) { color = P_YELLOW; return T("Climb back to the surface"); }
@@ -5851,6 +5995,9 @@ static void drawPlayerPrompts(float W, float H, Vec2 at) {
             }
             if (o.kind == Interact::Mechanic) { color = P_ORANGE; return T("Talk to Rusty (cars)"); }
             if (o.kind == Interact::Refuel) { color = P_YELLOW; return T("Pour in a Fuel Can"); }
+            if (o.kind == Interact::Radio) { color = P_ORANGE; return T("Mend the radio tower"); }
+            if (o.kind == Interact::Medic) { color = P_YGREEN; return T1("Medic: patch me up (${0})", std::to_string(MEDIC_PRICE)); }
+            if (o.kind == Interact::Buyer) { color = P_YELLOW; return T("Buyer: sell valuables"); }
             if (o.kind == Interact::Stairs) {
                 bool up = o.container >= 0 && o.container < (int)G.world.stairs.size() && G.world.stairs[o.container].up;
                 return up ? T("Go upstairs") : T("Go downstairs");
@@ -6465,6 +6612,20 @@ void drawMapPanel() {
             Vec2 mp = mechanicHome() / (float)TILE * sc + origin;
             R::text("M", std::floor(mp.x) - 2, std::floor(mp.y) - 4, pal(P_ORANGE));
         }
+        // The supply drop, and the tower and the camp once their land is open (0.13v).
+        const World& w = G.world;
+        if (w.dropPos.x > 0) {
+            Vec2 dp = w.dropPos / (float)TILE * sc + origin;
+            float bl = 0.6f + 0.4f * std::sin(G.realTime * 5);
+            R::rect(std::floor(dp.x) - 2, std::floor(dp.y) - 2, 5, 5, pal(P_CORAL, bl));
+            R::text(T("DROP"), std::floor(dp.x) + 4, std::floor(dp.y) - 3, pal(P_CORAL));
+        }
+        if (w.radioPos.x > 0 && w.unlockedAt(World::toTile(w.radioPos.x), World::toTile(w.radioPos.y))) {
+            Vec2 rp = w.radioPos / (float)TILE * sc + origin;
+            R::text("R", std::floor(rp.x) - 2, std::floor(rp.y) - 4, pal(p.radioFixed ? P_YGREEN : P_ORANGE));
+            Vec2 cp = (w.medicPos + w.buyerPos) * 0.5f / (float)TILE * sc + origin;
+            R::text("+", std::floor(cp.x) - 2, std::floor(cp.y) - 4, pal(P_YGREEN));
+        }
     }
     Vec2 pp = G.world.surfacePos(G.player.pos) / (float)TILE * sc + origin;
     bool blink = std::fmod(G.realTime, 0.6f) < 0.4f;
@@ -6963,6 +7124,7 @@ void raid_draw() {
     if (!p.rivals) for (const Turret& tu : p.turrets) drawTurret(tu, turretPos(tu), 1.0f);
     drawCars();
     drawMechanic();
+    drawRadioHill();
     Vec2 cf(std::floor(cam.x), std::floor(cam.y));
     auto onScreen = [&](Vec2 pos) {
         return pos.x > cf.x - 48 && pos.y > cf.y - 64 && pos.x < cf.x + R::viewW() + 48 && pos.y < cf.y + R::viewH() + 48;
@@ -7024,6 +7186,7 @@ void raid_draw() {
     }
     drawCarTags();
     drawMechanicTag();
+    drawRadioHillTags();
     if (isGuest()) {
         for (const MercView& m : s_mercViews) {
             if (!onScreen(m.pos) || m.ride) continue;
@@ -7603,7 +7766,7 @@ void sendSnapshot(int slot) {
         if (lengthSq(e.pos - at) > NET_RANGE * NET_RANGE && (e.type != EnemyType::Zombie || e.roamer)) continue;
         m.u32(e.netId);
         m.u8((uint8_t)e.type);
-        m.u8(e.type == EnemyType::Zombie ? (uint8_t)(e.zkind | ((e.infect & 3) << 2) | (e.roamer ? 0x80 : 0) | (e.noAxe ? 0x40 : 0) | (e.takeT >= 0 ? 0x20 : 0)) : e.artVariant);
+        m.u8(e.type == EnemyType::Zombie ? (uint8_t)(e.zkind | ((e.infect & 3) << 2) | (e.boss ? 0x10 : 0) | (e.roamer ? 0x80 : 0) | (e.noAxe ? 0x40 : 0) | (e.takeT >= 0 ? 0x20 : 0)) : e.artVariant);
         uint8_t f = (e.hurtT > 0 ? 1 : 0) | (e.flashT > 0 ? 2 : 0) | (e.reloadT > 0 ? 4 : 0) |
                     (e.state == AIState::Alert ? 8 : 0) | (e.meleeCd > 0.35f ? 16 : 0);
         m.u8(f);
@@ -7665,6 +7828,7 @@ void readSnapshot(Net::Reader& r) {
             e.zkind = variant & 3; e.artVariant = (uint8_t)(variant & 3); e.roamer = (variant & 0x80) != 0;
             e.noAxe = (variant & 0x40) != 0;
             e.infect = (uint8_t)((variant >> 2) & 3);
+            e.boss = (variant & 0x10) != 0;
             if ((variant & 0x20) && e.takeT < 0) e.takeT = 0.8f;
             if (!(variant & 0x20)) e.takeT = -1;
         }
@@ -7918,6 +8082,7 @@ std::string raid_coopOffscreenHorde() {
         s_rng = Rng(seed ^ 0x51EE9);
         World::zombieSpawns = p.zombieMode();
         World::withCrypts = true;
+        World::airdrops = p.radioFixed;
         G.world.generate(seed, p.day);
         placeTurretsInWorld(G.world);
     s_gateT.clear();
@@ -8111,6 +8276,12 @@ void raid_netMessage(int slot, uint8_t type, Net::Reader& r) {
             if (G.world.damageTile(tx, ty, dmg)) addParticles(World::tileCenter(tx, ty), 10, solidInfo(S_WALL_WOOD).mapColor, 15, 90, 0.2f, 0.8f, false, 2);
             break;
         }
+        case M_RADIO_FIX:
+            if (!G.prof.radioFixed) {
+                G.prof.radioFixed = true;
+                pushMessage(T1("{0} mended the radio tower. Supply drops from tomorrow.", Coop::player(slot).name), P_YGREEN);
+            }
+            break;
         case M_PVP_HIT: {
             int target = r.u8();
             float dmg = r.f32();
@@ -8406,6 +8577,7 @@ std::string raid_missedHorde() {
     s_rng = Rng(todaySeed() ^ 0x51EE9);
     World::zombieSpawns = p.zombieMode();
     World::withCrypts = true;
+    World::airdrops = p.radioFixed;
     G.world.generate(todaySeed(), p.day);
     placeTurretsInWorld(G.world);
     s_gateT.clear();

@@ -1563,6 +1563,187 @@ struct Gen {
         }
     }
 
+    // ---- the army base (0.13v, day 7): a wire fence round barracks, the HQ, a motor
+    // pool and a supply depot, towers of sandbags at the corners, soldiers on patrol.
+    void armyBase(const Region& R, int gateX) {
+        const int bw = 124, bh = 78;
+        int x0 = R.cx() - bw / 2, y0 = R.cy() - bh / 2 + 4;
+        for (int y = y0 - 2; y < y0 + bh + 2; y++)
+            for (int x = x0 - 2; x < x0 + bw + 2; x++) {
+                Tile& t = W.at(x, y);
+                if (t.ground == G_ROAD) continue;
+                t.solid = S_NONE; t.hp = 0; t.worldDeco = 0; t.deco = 0; t.flags = 0;
+                t.ground = G_DIRT;
+            }
+        // The fence, with the gate where the highway comes in.
+        for (int x = x0; x < x0 + bw; x++)
+            for (int y : {y0, y0 + bh - 1}) {
+                if (y == y0 + bh - 1 && x >= gateX - 1 && x <= gateX + 4) continue;
+                setSolid(x, y, S_FENCE);
+            }
+        for (int y = y0; y < y0 + bh; y++) { setSolid(x0, y, S_FENCE); setSolid(x0 + bw - 1, y, S_FENCE); }
+        // Sandbag towers at the corners, a sniper in each.
+        for (int cx : {x0 + 3, x0 + bw - 6})
+            for (int cy : {y0 + 3, y0 + bh - 6}) {
+                for (int k = 0; k < 4; k++) {
+                    setSolid(cx + k, cy, S_SANDBAG); setSolid(cx + k, cy + 3, S_SANDBAG);
+                    setSolid(cx, cy + k, S_SANDBAG); setSolid(cx + 3, cy + k, S_SANDBAG);
+                }
+                setSolid(cx + 1, cy + 3, S_NONE); setSolid(cx + 2, cy + 3, S_NONE);
+                W.spawns.push_back({World::tileCenter(cx + 1, cy + 1), EnemyType::Sniper});
+            }
+        // The parade ground in the middle, paved, and the helipad beside it.
+        auto pave = [&](int px, int py, int pw, int ph) {
+            for (int y = py; y < py + ph; y++)
+                for (int x = px; x < px + pw; x++) if (W.at(x, y).solid == S_NONE) W.at(x, y).ground = G_PAVEMENT;
+        };
+        pave(x0 + 44, y0 + 30, 36, 18);
+        pave(x0 + 10, y0 + 32, 14, 14);
+        // Barracks along the back.
+        bkind = BK_MILITARY;
+        for (int i = 0; i < 4; i++)
+            building(x0 + 12 + i * 26, y0 + 9, 18, 9, S_WALL_CONCRETE, G_FLOOR_CONCRETE, LootKind::Military, 2, 4, 0.03f);
+        // The HQ, two floors, and the armoury.
+        building(x0 + 88, y0 + 30, 22, 13, S_WALL_CONCRETE, G_FLOOR_TILE, LootKind::Military, 3, 5, 0, 1);
+        building(x0 + 26, y0 + bh - 20, 14, 9, S_WALL_CONCRETE, G_FLOOR_CONCRETE, LootKind::Military, 4, 6, 0);
+        // The motor pool: wrecks in rows on the pavement.
+        pave(x0 + 80, y0 + bh - 22, 34, 16);
+        for (int i = 0; i < 5; i++) wreck(x0 + 84 + i * 6, y0 + bh - 16, 2, (uint8_t)rng.next());
+        // The supply depot: stacked crates and the army's own boxes.
+        for (int i = 0; i < 40; i++) {
+            int x = x0 + 48 + rng.irange(0, 26), y = y0 + bh - 20 + rng.irange(0, 12);
+            if (W.at(x, y).solid == S_NONE && W.at(x, y).ground != G_ROAD) setSolid(x, y, S_CRATE);
+        }
+        for (int i = 0; i < 6; i++) {
+            int x = x0 + 48 + rng.irange(0, 26), y = y0 + bh - 20 + rng.irange(0, 12);
+            if (W.at(x, y).solid == S_NONE && W.at(x, y).ground != G_ROAD) placeContainer(x, y, qualityAt(x, y) + 0.2f, LootKind::Military);
+        }
+        // Who holds it: squads about the place and a patrol round the inside of the fence.
+        spawnGroup(x0 + 60, y0 + 38, 4, 12, true);
+        spawnGroup(x0 + 30, y0 + 20, 3, 10, true);
+        spawnGroup(x0 + 95, y0 + 20, 3, 10, true);
+        spawnGroup(x0 + 60, y0 + bh - 14, 3, 10, true);
+        PatrolRoute route;
+        int in = 7;
+        route.points = {World::tileCenter(x0 + in, y0 + in), World::tileCenter(x0 + bw - in, y0 + in),
+                        World::tileCenter(x0 + bw - in, y0 + bh - in), World::tileCenter(x0 + in, y0 + bh - in)};
+        W.patrols.push_back(route);
+        int id = (int)W.patrols.size() - 1;
+        for (int m = 0; m < 4 + day / 8; m++)
+            W.spawns.push_back({route.points[0] + Vec2((float)(m * 14), 0), m == 0 ? EnemyType::Heavy : EnemyType::Bandit, false, id});
+        // Outposts out on the rest of the land.
+        for (int i = 0, tries = 0; i < 3 && tries < 60; tries++) {
+            int cx = rng.irange(R.x0 + 26, R.x0 + R.w - 27), cy = rng.irange(R.y0 + 26, R.y0 + R.h - 27);
+            if (cx > x0 - 16 && cx < x0 + bw + 16 && cy > y0 - 16 && cy < y0 + bh + 16) continue;
+            if (nearWater(cx, cy, 13)) continue;
+            military(cx, cy);
+            i++;
+        }
+    }
+
+    // ---- the radio hill (0.13v, day 12): a dead radio tower in its fenced yard (mend it
+    // and a supply drop comes down every day after), and the survivors' camp.
+    void radioHill(const Region& R) {
+        // Somewhere dry in the north half for the tower, the south half for the camp.
+        auto dryspot = [&](int ya, int yb, int r) {
+            for (int tries = 0; tries < 200; tries++) {
+                int cx = rng.irange(R.x0 + 34, R.x0 + R.w - 35), cy = rng.irange(ya, yb);
+                if (!nearWater(cx, cy, r) && W.at(cx, cy).ground != G_ROAD) return std::make_pair(cx, cy);
+            }
+            return std::make_pair(R.cx() + 30, (ya + yb) / 2);
+        };
+        auto [tx, ty] = dryspot(R.y0 + 34, R.cy() - 20, 16);
+        clearArea(tx - 12, ty - 10, 25, 21, G_DIRT);
+        for (int x = tx - 11; x <= tx + 11; x++) { setSolid(x, ty - 9, S_FENCE); if (std::abs(x - tx) > 2) setSolid(x, ty + 9, S_FENCE); }
+        for (int y = ty - 9; y <= ty + 9; y++) { setSolid(tx - 11, y, S_FENCE); setSolid(tx + 11, y, S_FENCE); }
+        // The tower's feet (drawn by the raid), and its console in front.
+        for (int y = ty - 3; y <= ty - 2; y++)
+            for (int x = tx - 1; x <= tx; x++) { Tile& t = W.at(x, y); t.solid = S_FURNITURE; t.hp = -1; }
+        W.radioPos = World::tileCenter(tx, ty) + Vec2(-8, 2);
+        bkind = BK_MILITARY;
+        building(tx + 3, ty - 7, 7, 6, S_WALL_CONCRETE, G_FLOOR_CONCRETE, LootKind::Toolbox, 1, 2, 0);
+        spawnGroup(tx, ty + 14, 3, 10, true);
+        g_road(tx, ty + 9, R.cx(), W.homeTy + 12);
+
+        // The camp: a ring of sandbags, tents, and two who will deal with you.
+        auto [cx, cy] = dryspot(R.cy() + 24, R.y0 + R.h - 34, 18);
+        clearArea(cx - 14, cy - 11, 29, 23, G_DIRT);
+        for (int x = cx - 13; x <= cx + 13; x++) { setSolid(x, cy - 10, S_SANDBAG); if (std::abs(x - cx) > 2) setSolid(x, cy + 10, S_SANDBAG); }
+        for (int y = cy - 10; y <= cy + 10; y++) { setSolid(cx - 13, y, S_SANDBAG); setSolid(cx + 13, y, S_SANDBAG); }
+        bkind = BK_CABIN;
+        building(cx - 11, cy - 8, 6, 5, S_WALL_WOOD, G_FLOOR_WOOD, LootKind::Generic, 0, 1, 0);
+        building(cx + 5, cy - 8, 6, 5, S_WALL_WOOD, G_FLOOR_WOOD, LootKind::Generic, 0, 1, 0);
+        W.medicPos = World::tileCenter(cx - 5, cy + 3);
+        W.buyerPos = World::tileCenter(cx + 5, cy + 3);
+        g_road(cx, cy + 10, R.cx(), W.homeTy + 12);
+        // Farms round about, and those who pick them over.
+        for (int i = 0, tries = 0; i < 2 && tries < 60; tries++) {
+            int fx = rng.irange(R.x0 + 26, R.x0 + R.w - 27), fy = rng.irange(R.y0 + 26, R.y0 + R.h - 27);
+            if (nearWater(fx, fy, 13) || std::abs(fx - tx) + std::abs(fy - ty) < 40 || std::abs(fx - cx) + std::abs(fy - cy) < 40) continue;
+            farm(fx, fy);
+            i++;
+        }
+    }
+    // A plain two-wide road for a region's own tracks (the Gen's width may be the highway's).
+    void g_road(int x0, int y0, int x1, int y1) {
+        int keep = roadW;
+        roadW = 2;
+        road(x0, y0, x1, y1);
+        roadW = keep;
+    }
+
+    // ---- the suburb (0.13v, day 15): streets of houses off the highway, most of them
+    // wrecked; the metro goes down somewhere among them (generateBelow).
+    void suburb(const Region& R, int highwayX) {
+        bkind = BK_TOWN;
+        for (int sy = R.y0 + 30; sy < R.y0 + R.h - 24; sy += 30) {
+            int x0 = R.x0 + 24, x1 = R.x0 + R.w - 24;
+            g_road(x0, sy, x1, sy);
+            for (int x = x0 + 2; x < x1 - 10; x += rng.irange(12, 16)) {
+                if (std::abs(x - highwayX) < 12) continue;
+                for (int side = 0; side < 2; side++) {
+                    int bw = rng.irange(7, 10), bh = rng.irange(6, 8);
+                    int by = side == 0 ? sy - bh - 2 : sy + 4;
+                    float ruin = rng.chance(0.6f) ? 0.18f : 0.04f;
+                    int wall = ruin > 0.1f ? S_WALL_BRICK : (rng.chance(0.5f) ? S_WALL_WOOD : S_WALL_CONCRETE);
+                    if (!nearWater(x + bw / 2, by + bh / 2, 6))
+                        building(x, by, bw, bh, wall, rng.chance(0.6f) ? G_FLOOR_WOOD : G_FLOOR_TILE, LootKind::Generic, 1, 3, ruin);
+                }
+            }
+            spawnGroup(R.cx() + rng.irange(-60, 60), sy, rng.irange(3, 4), 14);
+        }
+        for (int i = 0; i < 18 + day; i++) {
+            int x = rng.irange(R.x0 + 10, R.x0 + R.w - 11), y = rng.irange(R.y0 + 10, R.y0 + R.h - 11);
+            if (!W.blocksMove(x, y)) W.spawns.push_back({World::tileCenter(x, y), EnemyType::Zombie});
+        }
+    }
+
+    // Today's supply drop (0.13v): a crate of army kit on open ground somewhere on the
+    // open land well away from home, with the ones who saw it come down on their way.
+    void supplyDrop() {
+        for (int tries = 0; tries < 400; tries++) {
+            int r = rng.irange(0, RG_COUNT - 1);
+            const Region& R = REGIONS[r];
+            if (R.day > day || r == RG_CITY_W) continue;
+            int x = rng.irange(R.x0 + 14, R.x0 + R.w - 15), y = rng.irange(R.y0 + 14, R.y0 + R.h - 15);
+            int dx = x - W.homeTx, dy = y - W.homeTy;
+            if (dx * dx + dy * dy < 70 * 70) continue;
+            bool ok = true;
+            for (int yy = y - 2; yy <= y + 2 && ok; yy++)
+                for (int xx = x - 2; xx <= x + 2 && ok; xx++) {
+                    const Tile& t = W.at(xx, yy);
+                    if (t.solid != S_NONE || t.ground == G_WATER || t.ground == G_BRIDGE || (t.ground >= G_FLOOR_WOOD && t.ground <= G_FLOOR_TILE)) ok = false;
+                }
+            if (!ok) continue;
+            int id = W.addContainer(World::tileCenter(x, y), CK_MILITARY, x, y, (uint8_t)rng.next());
+            W.containers[id].searchTime = 2.0f;
+            fillContainer(id, 1.15f, LootKind::Military, 5, 8);
+            W.dropPos = World::tileCenter(x, y);
+            spawnGroup(x, y, 3, 9, true, false);
+            return;
+        }
+    }
+
     void spawnGroup(int cx, int cy, int count, int radius, bool military = false, bool addDay = true) {
         if (addDay) count += day / 3;
         for (int i = 0; i < count; i++) {
@@ -1582,6 +1763,7 @@ struct Gen {
 
 bool World::zombieSpawns = false;
 bool World::withCrypts = false;
+bool World::airdrops = false;
 
 // ---------------------------------------------------------------- the catacombs
 // Built after the outside: the map grows to 320x320 and today's catacombs (three of
@@ -1607,8 +1789,9 @@ void cryptLoot(World& W, Rng& rng, int id, int n, bool rich) {
     }
 }
 
-void buildCrypt(World& W, Rng& rng, int idx, int bx, int by, int day) {
+void buildCrypt(World& W, Rng& rng, int idx, int bx, int by, int day, bool metro = false) {
     Dungeon d;
+    d.metro = metro;
     d.x0 = bx; d.y0 = by; d.w = CRYPT_BLOCK; d.h = CRYPT_BLOCK;
     auto carve = [&](int x, int y) {
         if (x <= bx || y <= by || x >= bx + CRYPT_BLOCK - 1 || y >= by + CRYPT_BLOCK - 1) return;
@@ -1841,6 +2024,7 @@ void buildCrypt(World& W, Rng& rng, int idx, int bx, int by, int day) {
             }
             return World::tileCenter(r.cx(), r.cy());
         };
+        if (metro && last) W.spawns.push_back({World::tileCenter(r.cx(), r.cy()), EnemyType::Zombie, true, -1, true});
         if (kind != 1) {   // a horde of the dead
             int n = rng.irange(3, 5) + (int)(tier * 5) + (int)(depth * (2 + tier * 5));
             for (int i = 0; i < n; i++) W.spawns.push_back({spot(), EnemyType::Zombie, true});
@@ -2062,10 +2246,13 @@ static void generateBelow(World& W, uint64_t seed, int day, const std::vector<Fl
     if (!crypts) return;
     for (size_t i = blocks.size(); i > 1; i--) std::swap(blocks[i - 1], blocks[(size_t)rng.irange(0, (int)i - 1)]);
     // One catacomb a day (0.11v): the first block that takes one and has room for its door.
-    int count = 1;
+    // From day 15 (0.13v) a second one: the metro under the suburb, harder, its brute
+    // waiting at the end.
+    int count = day >= METRO_DAY && REGIONS[RG_SOUTH].day <= day ? 2 : 1;
     for (int i = 0; (int)W.dungeons.size() < count && i < (int)blocks.size(); i++) {
         size_t before = W.dungeons.size();
-        buildCrypt(W, rng, (int)before, blocks[i].first, blocks[i].second, day);
+        bool metro = before == 1;
+        buildCrypt(W, rng, (int)before, blocks[i].first, blocks[i].second, metro ? day + 8 : day, metro);
         if (W.dungeons.size() == before) continue;
         // Its door: a stair arch on open ground, well away from the bunker.
         Dungeon& d = W.dungeons.back();
@@ -2081,6 +2268,11 @@ static void generateBelow(World& W, uint64_t seed, int day, const std::vector<Fl
                     if (pick < R.w * R.h) { tx = R.x0 + pick % R.w; ty = R.y0 + pick / R.w; break; }
                     pick -= R.w * R.h;
                 }
+            }
+            if (metro) {
+                const Region& S = REGIONS[RG_SOUTH];
+                tx = rng.irange(S.x0 + 16, S.x0 + S.w - 17);
+                ty = rng.irange(S.y0 + 16, S.y0 + S.h - 17);
             }
             if (tx < 12 || ty < 12 || tx > ow - 13 || ty > oh - 13 || !W.unlockedAt(tx, ty)) continue;
             int dx = tx - W.homeTx, dy = ty - W.homeTy;
@@ -2154,6 +2346,7 @@ void World::generate(uint64_t seedIn, int day) {
     floors.clear();
     stairs.clear();
     patrols.clear();
+    radioPos = medicPos = buyerPos = dropPos = Vec2();
     const Region& HOME = REGIONS[RG_HOME];
     homeTx = HOME.cx();
     homeTy = HOME.cy();
@@ -2430,6 +2623,25 @@ void World::generate(uint64_t seedIn, int day) {
         fg.forest(REGIONS[RG_FOREST_W], true);
         fg.forest(REGIONS[RG_FOREST_N], false);
     }
+    // The land further out (0.13v): the army base, the radio hill and the suburb. Each on
+    // dice of its own, so what one of them holds never moves another.
+    {
+        Rng ar(mix64(seed ^ 0xA7B45Eull));
+        Gen ag{*this, ar, day};
+        ag.armyBase(REGIONS[RG_MILITARY], homeTx - 16);
+        Rng er(mix64(seed ^ 0xEA57ull));
+        Gen eg{*this, er, day};
+        eg.radioHill(REGIONS[RG_EAST]);
+        Rng sr(mix64(seed ^ 0x50B0ull));
+        Gen sg{*this, sr, day};
+        sg.suburb(REGIONS[RG_SOUTH], homeTx - 16);
+        for (Gen* x : {&ag, &eg, &sg}) g.floorPlans.insert(g.floorPlans.end(), x->floorPlans.begin(), x->floorPlans.end());
+        if (airdrops && day >= RADIO_DAY) {
+            Rng dr(mix64(seed ^ 0xD209ull));
+            Gen dg{*this, dr, day};
+            dg.supplyDrop();
+        }
+    }
 
     // Abandoned cars and street lights along the roads.
     {
@@ -2570,7 +2782,7 @@ void World::generate(uint64_t seedIn, int day) {
             if (s.crypt) {
                 // Down in the catacombs a gang becomes a few more of the dead, where it stood.
                 int n = s.type == EnemyType::Zombie ? 1 : zr.irange(2, 3);
-                for (int i = 0; i < n; i++) packs.push_back({s.pos + Vec2(zr.range(-6, 6), zr.range(-6, 6)), EnemyType::Zombie, true});
+                for (int i = 0; i < n; i++) packs.push_back({s.pos + Vec2(zr.range(-6, 6), zr.range(-6, 6)), EnemyType::Zombie, true, -1, s.boss && i == 0});
                 continue;
             }
             pack(s.pos, zr.irange(2, 4) + day / 5);
@@ -2587,9 +2799,11 @@ void World::generate(uint64_t seedIn, int day) {
         spawns = std::move(packs);
     }
 
-    // Nothing waits on the land that has not opened yet (0.13v): it is only scenery.
+    // Nothing waits on the land that has not opened yet (0.13v): it is only scenery. Nor
+    // in the survivors' camp.
     spawns.erase(std::remove_if(spawns.begin(), spawns.end(), [&](const EnemySpawn& sp) {
         if (sp.crypt) return false;
+        if (medicPos.x > 0 && dist(sp.pos, (medicPos + buyerPos) * 0.5f) < 22 * TILE) return true;
         Vec2 p = surfacePos(sp.pos);
         int tx = toTile(p.x), ty = toTile(p.y);
         if (tx >= outW || ty >= outH) return false;
@@ -2621,6 +2835,11 @@ void World::generate(uint64_t seedIn, int day) {
                 }
             std::fclose(f);
         }
+    }
+    if (std::getenv("OUTBOUND_DRESS_LOG") || std::getenv("OUTBOUND_MAPDUMP")) {
+        std::fprintf(stderr, "[world] radio %d,%d  camp %d,%d  drop %d,%d\n", toTile(radioPos.x), toTile(radioPos.y), toTile(medicPos.x), toTile(medicPos.y),
+                     toTile(dropPos.x), toTile(dropPos.y));
+        for (const Dungeon& d : dungeons) std::fprintf(stderr, "[world] %s door %d,%d\n", d.metro ? "metro" : "crypt", toTile(d.door.x), toTile(d.door.y));
     }
     std::fprintf(stderr, "[world] day %d: %dx%d, %zu cities, %zu floors, %zu spawns, %zu containers, %zu props\n", day, outW, outH,
                  cities.size(), floors.size(), spawns.size(), containers.size(), props.size());

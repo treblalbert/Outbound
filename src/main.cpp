@@ -387,6 +387,7 @@ static void applyDevArgs(int argc, char** argv) {
         }
         if (a.rfind("--carcolor=", 0) == 0 && G.prof.activeCar >= 0) G.prof.cars[G.prof.activeCar].color = std::clamp(std::atoi(a.c_str() + 11), 0, CAR_COLORS - 1);
         if (a == "--mechmet") G.prof.mechanicMet = true;
+        if (a == "--radio") G.prof.radioFixed = true;   // 0.13v: the tower is mended (supply drops)
     }
     raid_start();
     if (devBleed) { G.player.bleedT = 60; G.prof.hp = 80; }
@@ -447,6 +448,9 @@ static void applyDevArgs(int argc, char** argv) {
             }
         }
         if (a.rfind("--local=", 0) == 0) Local::devSeats(std::atoi(a.c_str() + 8));   // --local=N: local co-op test
+        if (a == "--atdrop" && G.world.dropPos.x > 0) { G.player.pos = G.world.dropPos + Vec2(0, 40); G.cam = G.player.pos - Vec2(R::viewW() / 2.0f, R::viewH() / 2.0f); }
+        if (a == "--atradio" && G.world.radioPos.x > 0) { G.player.pos = G.world.radioPos + Vec2(0, 40); G.cam = G.player.pos - Vec2(R::viewW() / 2.0f, R::viewH() / 2.0f); }
+        if (a == "--atcamp" && G.world.medicPos.x > 0) { G.player.pos = (G.world.medicPos + G.world.buyerPos) * 0.5f + Vec2(0, 24); G.cam = G.player.pos - Vec2(R::viewW() / 2.0f, R::viewH() / 2.0f); }
         if (a == "--athatch") { G.player.pos = G.world.homePos + Vec2(0, 24); G.cam = G.player.pos - Vec2(R::viewW() / 2.0f, R::viewH() / 2.0f); }
         if (a == "--atcompound") { G.player.pos = G.world.homePos + Vec2(0, 76); G.cam = G.player.pos - Vec2(R::viewW() / 2.0f, R::viewH() / 2.0f); }
         // 0.11v: --driving, --atcity, --atfloor, --atgarage, --panel=mechanic.

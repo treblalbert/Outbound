@@ -196,7 +196,7 @@ struct Container {
     bool removed = false;
 };
 
-struct EnemySpawn { Vec2 pos; EnemyType type; bool crypt = false; int patrol = -1; };
+struct EnemySpawn { Vec2 pos; EnemyType type; bool crypt = false; int patrol = -1; bool boss = false; };
 
 // A roofed structure. The roof covers the footprint except its bottom row, so the
 // front wall and any door in it stay visible from outside.
@@ -246,6 +246,7 @@ struct Dungeon {
     // Where you stand to work it, on the room's side.
     Vec2 gateFront() const { return {(gateX + 2) * (float)16, (gateY + gateDir) * (float)16 + 8 + gateDir * 4.0f}; }
     bool contains(int tx, int ty) const { return tx >= x0 && ty >= y0 && tx < x0 + w && ty < y0 + h; }
+    bool metro = false;                 // 0.13v: the metro under the suburb (day 15), with its brute
 };
 
 // Things that move but still stand in the way (the cars people drive, 0.11v): the raid
@@ -285,6 +286,11 @@ struct World {
     static bool zombieSpawns;
     // Set before generate: build today's catacombs too (raid worlds only).
     static bool withCrypts;
+    // 0.13v, set before generate: the radio tower is fixed, so a supply drop comes down.
+    static bool airdrops;
+    // 0.13v: the radio tower's console, the survivors' medic and buyer, and today's
+    // supply drop (0,0 when there is none).
+    Vec2 radioPos, medicPos, buyerPos, dropPos;
     // Where a point is: -1 outside, 0.. a catacomb, 100.. an upper floor (100 + index),
     // -2 nowhere (the rock between). Two things can only fight in the same place.
     int areaAt(Vec2 p) const { return areaAtTile(toTile(p.x), toTile(p.y)); }

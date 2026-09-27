@@ -71,6 +71,7 @@ enum Msg : uint8_t {
     M_CAR_DMG,       // host -> owner: your car got hurt
     M_CAR_SMASH,     // guest -> host: my car drove through these tiles
     M_MELEE_TILE,    // guest -> host: my melee hit this tile for this much (0.12v)
+    M_RADIO_FIX,     // guest -> host: I mended the radio tower (0.13v)
 };
 
 struct NetPlayer {

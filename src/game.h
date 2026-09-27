@@ -298,6 +298,7 @@ struct Profile {
     int missionsCompleted = 0;
     bool laserUnlocked = false;
     bool autoEquip = true;       // 0.12v: looted guns go straight into an empty gun slot
+    bool radioFixed = false;     // 0.13v: the radio tower is mended: a supply drop every day
     bool laserOwned = false;     // 0.11v: has ever had a laser fitted (opens the Laser Focus upgrade)
     bool laserOn = false;        // before 0.7v: one switch for every gun (read from old saves only)
 
@@ -420,6 +421,7 @@ struct Enemy {
     bool noAxe = false;
     // 0.13v: the infected, from day 10: 1 a runner, 2 a spitter, 3 a brute (0 none).
     uint8_t infect = 0;
+    bool boss = false;         // 0.13v: the metro's brute
     float spitCd = 0;
     float axeCd = 3, takeT = -1;
 };
