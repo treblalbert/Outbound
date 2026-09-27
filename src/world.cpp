@@ -44,6 +44,21 @@ static const SolidInfo SOLIDS[S_COUNT] = {
     {WHITE, -1, false, false, P_TAN,               0.0f, false},   // S_GATE_OPEN
     {FENCE, 60, false, false, P_TAN,               0.0f},          // S_FENCE_GATE
     {FENCE, -1, false, false, P_TAN,               0.0f, false},   // S_FENCE_GATE_OPEN
+    // A roadblock on a closed bridge (0.13v): waist high, nothing gets through it.
+    {WHITE, -1, false, false, P_CORAL,             0.0f},          // S_ROADBLOCK
+};
+
+// The island (0.13v): see world.h. The home ground is the old day-one map, 240 tiles
+// across, in the middle of the south half; the sea keeps at least 8 tiles between any
+// two regions' rectangles, and the coasts are carved inside them.
+const Region REGIONS[RG_COUNT] = {
+    {280, 300, 240, 240, 1, "Home"},
+    {160, 368, 112, 124, CITY_DAY, "West woods"},
+    {16, 296, 136, 256, CITY_DAY, "The city"},
+    {336, 188, 128, 104, MILITARY_DAY, "North woods"},
+    {286, 28, 228, 152, MILITARY_DAY, "Army base"},
+    {528, 330, 168, 190, RADIO_DAY, "Radio hill"},
+    {296, 548, 208, 148, METRO_DAY, "The suburb"},
 };
 
 // What can stand in a building. FP_WALL pieces go against the back wall, FP_FREE ones
@@ -95,9 +110,11 @@ static float fbm(float x, float y, uint32_t seed) {
 // radius still reaches three quarters of the way; the cities add a quarter more.
 float World::lootQuality(int tx, int ty) const {
     float d = std::sqrt(float((tx - homeTx) * (tx - homeTx) + (ty - homeTy) * (ty - homeTy)));
-    float q;
-    if (outsideSize(day) <= 240) q = d / (240 * 0.55f);
-    else q = clampf(d / 132.0f, 0, 1) * 0.75f + clampf((d - 132.0f) / 100.0f, 0, 1) * 0.25f;
+    float q = clampf(d / 132.0f, 0, 1);
+    // Each region out past the home ground has a floor of its own (0.13v).
+    static const float FLOOR[RG_COUNT] = {0.0f, 0.5f, 0.62f, 0.55f, 0.8f, 0.78f, 0.88f};
+    int r = regionAtTile(tx, ty);
+    if (r >= 0) q = std::max(q * (r == RG_HOME ? 1.0f : 0.8f), FLOOR[r]);
     q = clampf(q + day * 0.022f, 0, 1);
     // However far you walk, the first days' loot stays modest (0.12v): 0.43 on day 1,
     // 0.73 on day 5, the whole range by day 9.
@@ -726,8 +743,9 @@ struct Gen {
                     if (reserved(tx, ty)) continue;           // keep the compound intact
                     if (W.cityAt(tx, ty) >= 0) continue;      // a city has its own streets
                     Tile& t = W.at(tx, ty);
-                    if (t.solid == S_BOUNDARY || t.solid == S_BUNKER || t.solid == S_CONTAINER) continue;
+                    if (t.solid == S_BOUNDARY || t.solid == S_BUNKER || t.solid == S_CONTAINER || t.solid == S_ROADBLOCK) continue;
                     t.ground = t.ground == G_WATER || t.ground == G_BRIDGE ? G_BRIDGE : G_ROAD;
+                    t.flags &= (uint8_t)~(TF_PLANKS | TF_TRAIL);
                     t.solid = S_NONE;
                     t.deco = 0;
                 }
@@ -754,7 +772,8 @@ struct Gen {
                 const Tile& t = W.at(x, y);
                 if (t.solid == S_BOUNDARY || t.solid == S_BUNKER || t.solid == S_CONTAINER) return false;
                 if (t.ground >= G_FLOOR_WOOD && t.ground <= G_FLOOR_TILE) return false;
-                if (t.solid == S_CAR || t.solid == S_STAIRS) return false;
+                if (t.solid == S_CAR || t.solid == S_STAIRS || t.solid == S_ROADBLOCK) return false;
+                if (t.ground == G_WATER || t.ground == G_BRIDGE) return false;
                 if (!cityBuild && W.cityAt(x, y) >= 0) return false;
                 if (reserved(x, y)) return false;
                 int dx = x - W.homeTx, dy = y - W.homeTy;
@@ -1343,6 +1362,207 @@ struct Gen {
         return EnemyType::Scav;
     }
 
+    // ---- the island (0.13v) ----------------------------------------------------------
+    bool water(int x, int y) const { return W.inBounds(x, y) && W.at(x, y).ground == G_WATER; }
+    bool nearWater(int cx, int cy, int r) const {
+        for (int y = cy - r; y <= cy + r; y++)
+            for (int x = cx - r; x <= cx + r; x++)
+                if (!W.inBounds(x, y) || W.at(x, y).ground == G_WATER) return true;
+        return false;
+    }
+    // Where a tile may be dug out for a river: not the compound, not near the hatch.
+    bool keepDry(int x, int y) const {
+        int dx = x - W.homeTx, dy = y - W.homeTy;
+        return reserved(x, y) || dx * dx + dy * dy < 30 * 30 || W.at(x, y).solid == S_BOUNDARY;
+    }
+
+    // A river: it wanders from (x, y) on `dir` until it runs into the sea (or `len` steps),
+    // `width` tiles across give or take. Returns the points it passed, for the bridges.
+    std::vector<Vec2> river(float x, float y, float dir, int len, float width, uint32_t salt) {
+        std::vector<Vec2> path;
+        float heading = dir;
+        bool leftLand = false;
+        for (int i = 0; i < len; i++) {
+            // Bends from noise along its length, pulled back towards its general heading.
+            float bend = (fbm(i * 0.035f, 0.5f, salt) - 0.5f) * 2.2f;
+            heading += (dir + bend - heading) * 0.08f;
+            x += std::cos(heading);
+            y += std::sin(heading);
+            int tx = (int)x, ty = (int)y;
+            if (!W.inBounds(tx, ty)) break;
+            bool sea = W.at(tx, ty).ground == G_WATER && regionAtTile(tx, ty) < 0;
+            if (!sea) leftLand = true;
+            else if (leftLand) break;   // out into the sea again
+            path.push_back(Vec2(x, y));
+            float r = width * 0.5f * (0.8f + 0.5f * fbm(i * 0.08f, 3.5f, salt ^ 0x51u));
+            int ir = (int)std::ceil(r);
+            for (int oy = -ir; oy <= ir; oy++)
+                for (int ox = -ir; ox <= ir; ox++) {
+                    if (ox * ox + oy * oy > r * r + 0.3f) continue;
+                    int px = tx + ox, py = ty + oy;
+                    if (!W.inBounds(px, py) || keepDry(px, py)) continue;
+                    Tile& t = W.at(px, py);
+                    t.ground = G_WATER;
+                    t.solid = S_NONE;
+                    t.hp = 0;
+                    t.worldDeco = 0;
+                }
+        }
+        return path;
+    }
+    // Wooden footbridges over a river every so often, square across its flow.
+    void footbridges(const std::vector<Vec2>& path, int every) {
+        for (size_t i = (size_t)every / 2; i + 3 < path.size(); i += (size_t)every) {
+            Vec2 d = path[i + 3] - path[i >= 3 ? i - 3 : 0];
+            bool flowsAcross = std::fabs(d.x) > std::fabs(d.y);   // east-west: the bridge runs north-south
+            int cx = (int)path[i].x, cy = (int)path[i].y;
+            int ax = flowsAcross ? 0 : 1, ay = flowsAcross ? 1 : 0;
+            int a = 0, b = 0;
+            while (a < 12 && water(cx - ax * (a + 1), cy - ay * (a + 1))) a++;
+            while (b < 12 && water(cx + ax * (b + 1), cy + ay * (b + 1))) b++;
+            if (a >= 12 || b >= 12) continue;
+            if (!W.inBounds(cx - ax * (a + 1), cy - ay * (a + 1)) || !W.inBounds(cx + ax * (b + 1), cy + ay * (b + 1))) continue;
+            for (int k = -a; k <= b; k++)
+                for (int s = 0; s < 2; s++) {
+                    int x = cx + ax * k + ay * s, y = cy + ay * k + ax * s;
+                    if (!water(x, y)) continue;
+                    Tile& t = W.at(x, y);
+                    t.ground = G_BRIDGE;
+                    t.flags |= TF_PLANKS;
+                }
+        }
+    }
+
+    // A closed bridge: a roadblock across it, two tiles thick, where the water is widest.
+    void roadblock(int x0, int y0, int x1, int y1, int openDay) {
+        for (int y = y0; y <= y1; y++)
+            for (int x = x0; x <= x1; x++) {
+                if (!W.inBounds(x, y) || W.at(x, y).ground != G_BRIDGE) continue;
+                Tile& t = W.at(x, y);
+                t.solid = S_ROADBLOCK;
+                t.hp = -1;
+                t.variant = (uint8_t)openDay;
+            }
+    }
+
+    // A forest trail (0.13v): a winding strip of worn earth from (x, y) into the trees,
+    // `len` steps long. Returns where it ended.
+    std::pair<int, int> trail(float x, float y, float dir, int len, int wide, const Region& in) {
+        float heading = dir;
+        for (int i = 0; i < len; i++) {
+            heading += rng.range(-0.28f, 0.28f);
+            heading += (dir - heading) * 0.05f;
+            float nx = x + std::cos(heading), ny = y + std::sin(heading);
+            int tx = (int)nx, ty = (int)ny;
+            if (!in.contains(tx, ty) || !in.contains(tx + 3, ty + 3) || !in.contains(tx - 3, ty - 3) || water(tx, ty)) {
+                heading += PI * 0.5f;   // turn off the coast
+                continue;
+            }
+            x = nx; y = ny;
+            for (int oy = 0; oy < wide; oy++)
+                for (int ox = 0; ox < wide; ox++) {
+                    int px = tx + ox, py = ty + oy;
+                    if (!W.inBounds(px, py)) continue;
+                    Tile& t = W.at(px, py);
+                    if (t.ground == G_ROAD || t.ground == G_BRIDGE || t.ground == G_WATER) continue;
+                    if (t.solid == S_TREE || t.solid == S_BUSH) { t.solid = S_NONE; t.hp = 0; }
+                    if (t.solid != S_NONE) continue;
+                    t.ground = G_DIRT;
+                    t.worldDeco = 0;
+                    t.flags |= TF_TRAIL;
+                }
+        }
+        return {(int)x, (int)y};
+    }
+    // A clearing in the trees, round (cx, cy), with something in it: a cabin, a camp, a
+    // hunter's hide, or nothing but the dead that wander there.
+    void clearing(int cx, int cy, int r) {
+        for (int y = cy - r; y <= cy + r; y++)
+            for (int x = cx - r; x <= cx + r; x++) {
+                if (!W.inBounds(x, y)) continue;
+                float d = std::sqrt(float((x - cx) * (x - cx) + (y - cy) * (y - cy)));
+                if (d > r - rng.f() * 2.0f) continue;
+                Tile& t = W.at(x, y);
+                if (t.ground == G_WATER || t.ground == G_ROAD || t.ground == G_BRIDGE) continue;
+                if (t.solid == S_TREE || t.solid == S_BUSH) { t.solid = S_NONE; t.hp = 0; }
+                if (t.ground == G_DIRT && !(t.flags & TF_TRAIL) && rng.chance(0.5f)) t.ground = G_GRASS;
+            }
+        float what = rng.f();
+        bkind = BK_CABIN;
+        if (what < 0.45f) {
+            int bw = rng.irange(5, 8), bh = rng.irange(5, 7);
+            float ruin = rng.chance(0.4f) ? 0.15f : 0;
+            building(cx - bw / 2, cy - bh / 2, bw, bh, ruin > 0 ? S_WALL_BRICK : S_WALL_WOOD, G_FLOOR_WOOD, LootKind::Generic, 1, 3, ruin);
+        } else if (what < 0.75f) {
+            // A camp someone left in a hurry: their bags and a crate or two.
+            for (int i = 0; i < rng.irange(2, 4); i++) {
+                int x = cx + rng.irange(-r / 2, r / 2), y = cy + rng.irange(-r / 2, r / 2);
+                if (!W.inBounds(x, y) || W.blocksMove(x, y) || W.at(x, y).container >= 0) continue;
+                if (rng.chance(0.6f)) {
+                    int id = W.addContainer(World::tileCenter(x, y), CK_BAG, -1, -1, (uint8_t)rng.next());
+                    fillContainer(id, qualityAt(x, y), LootKind::Bag, 1, 3);
+                } else {
+                    placeContainer(x, y, qualityAt(x, y), LootKind::Crate);
+                }
+            }
+        } else if (what < 0.88f) {
+            bkind = BK_CABIN;
+            building(cx - 2, cy - 2, 5, 4, S_WALL_WOOD, G_FLOOR_WOOD, LootKind::Toolbox, 1, 1, 0.1f);
+        }
+        // The dead in the woods (they are raiders' posts no longer: zombies roam here).
+        int n = rng.irange(2, 4) + day / 4;
+        for (int i = 0; i < n; i++)
+            for (int attempt = 0; attempt < 10; attempt++) {
+                int x = cx + rng.irange(-r - 4, r + 4), y = cy + rng.irange(-r - 4, r + 4);
+                if (!W.inBounds(x, y) || W.blocksMove(x, y)) continue;
+                W.spawns.push_back({World::tileCenter(x, y), EnemyType::Zombie});
+                break;
+            }
+    }
+    // A forest region (0.13v): thick trees (the terrain pass planted them), trails off the
+    // highway that runs through it, and clearings at their ends.
+    void forest(const Region& R, bool westEast) {
+        // Where the highway runs through: find its tiles.
+        std::vector<std::pair<int, int>> hwy;
+        for (int y = R.y0; y < R.y0 + R.h; y++)
+            for (int x = R.x0; x < R.x0 + R.w; x++)
+                if (W.at(x, y).ground == G_ROAD) hwy.push_back({x, y});
+        int trails = rng.irange(5, 7);
+        std::vector<std::pair<int, int>> ends;
+        for (int i = 0; i < trails && !hwy.empty(); i++) {
+            auto [hx, hy] = hwy[rng.next() % hwy.size()];
+            // Off one side of the road or the other, square to it, then winding.
+            bool side = rng.chance(0.5f);
+            float dir = westEast ? (side ? PI * 0.5f : -PI * 0.5f) : (side ? 0.0f : PI);
+            // Step off the asphalt first.
+            int sx = hx, sy = hy;
+            for (int k = 0; k < 6 && W.inBounds(sx, sy) && W.at(sx, sy).ground == G_ROAD; k++) {
+                sx += (int)std::lround(std::cos(dir));
+                sy += (int)std::lround(std::sin(dir));
+            }
+            auto end = trail((float)sx, (float)sy, dir + rng.range(-0.4f, 0.4f), rng.irange(28, 60), rng.chance(0.4f) ? 2 : 1, R);
+            // A fork now and then, on towards somewhere else.
+            if (rng.chance(0.5f)) {
+                auto fork = trail((float)end.first, (float)end.second, dir + rng.range(-1.4f, 1.4f), rng.irange(16, 34), 1, R);
+                ends.push_back(fork);
+            }
+            ends.push_back(end);
+        }
+        for (auto [x, y] : ends) clearing(x, y, rng.irange(5, 8));
+        // A few loners wandering between the trees, and a bag dropped here and there.
+        for (int i = 0; i < 6 + day / 2; i++) {
+            int x = rng.irange(R.x0 + 6, R.x0 + R.w - 7), y = rng.irange(R.y0 + 6, R.y0 + R.h - 7);
+            if (W.blocksMove(x, y)) continue;
+            W.spawns.push_back({World::tileCenter(x, y), EnemyType::Zombie});
+        }
+        for (int i = 0; i < 8; i++) {
+            int x = rng.irange(R.x0 + 6, R.x0 + R.w - 7), y = rng.irange(R.y0 + 6, R.y0 + R.h - 7);
+            if (W.blocksMove(x, y) || W.at(x, y).ground == G_ROAD) continue;
+            int id = W.addContainer(World::tileCenter(x, y), CK_BAG, -1, -1, (uint8_t)rng.next());
+            fillContainer(id, qualityAt(x, y), LootKind::Bag, 1, 3);
+        }
+    }
+
     void spawnGroup(int cx, int cy, int count, int radius, bool military = false, bool addDay = true) {
         if (addDay) count += day / 3;
         for (int i = 0; i < count; i++) {
@@ -1850,7 +2070,19 @@ static void generateBelow(World& W, uint64_t seed, int day, const std::vector<Fl
         // Its door: a stair arch on open ground, well away from the bunker.
         Dungeon& d = W.dungeons.back();
         for (int attempt = 0; attempt < 600; attempt++) {
+            // Somewhere on today's open land (0.13v).
             int tx = rng.irange(12, ow - 13), ty = rng.irange(12, oh - 13);
+            {
+                int total = 0;
+                for (const Region& R : REGIONS) if (R.day <= day) total += R.w * R.h;
+                int pick = rng.irange(0, std::max(0, total - 1));
+                for (const Region& R : REGIONS) {
+                    if (R.day > day) continue;
+                    if (pick < R.w * R.h) { tx = R.x0 + pick % R.w; ty = R.y0 + pick / R.w; break; }
+                    pick -= R.w * R.h;
+                }
+            }
+            if (tx < 12 || ty < 12 || tx > ow - 13 || ty > oh - 13 || !W.unlockedAt(tx, ty)) continue;
             int dx = tx - W.homeTx, dy = ty - W.homeTy;
             if (dx * dx + dy * dy < 40 * 40) continue;
             bool ok = true;
@@ -1905,11 +2137,12 @@ void World::generate(uint64_t seedIn, int day) {
     this->day = day;
     setLootDay(day);
     Rng rng(seed);
-    // From day 5 the outside is five times the size, with cities round its edge.
-    w = h = outsideSize(day);
-    bool big = w > 240;
-    // How much more of everything the bigger map holds (the cities bring their own).
-    float more = big ? 3.2f : 1.0f;
+    // The island (0.13v): the same map every day, the regions round the home ground
+    // opening as the days go by (see REGIONS).
+    w = h = WORLD_SIZE;
+    outW = w;
+    outH = h;
+    bool big = day >= CITY_DAY;
     tiles.assign(w * h, Tile());
     containers.clear();
     props.clear();
@@ -1921,8 +2154,9 @@ void World::generate(uint64_t seedIn, int day) {
     floors.clear();
     stairs.clear();
     patrols.clear();
-    homeTx = w / 2;
-    homeTy = h / 2;
+    const Region& HOME = REGIONS[RG_HOME];
+    homeTx = HOME.cx();
+    homeTy = HOME.cy();
     homePos = tileCenter(homeTx, homeTy);
     Gen g{*this, rng, day};
     if (big) g.roadW = 3;
@@ -1931,46 +2165,83 @@ void World::generate(uint64_t seedIn, int day) {
     float waterLevel = rng.range(0.30f, 0.38f);
     float forestiness = rng.range(0.50f, 0.62f);
     float desert = rng.range(0.18f, 0.34f);
+    uint32_t coastSalt = (uint32_t)mix64(seed ^ 0xC0A57ull);
 
     for (int y = 0; y < h; y++)
         for (int x = 0; x < w; x++) {
             Tile& t = at(x, y);
+            t.variant = (uint8_t)(hash2(x, y, s3) & 255);
+            // The sea round every region: its rectangle with the corners rounded off, and
+            // the coast wandering in from that by 4 to 26 tiles.
+            int r = regionAtTile(x, y);
+            if (r >= 0) {
+                const Region& R = REGIONS[r];
+                float ex = (float)std::min(x - R.x0, R.x0 + R.w - 1 - x), ey = (float)std::min(y - R.y0, R.y0 + R.h - 1 - y);
+                const float cr = 34;
+                float edge = ex < cr && ey < cr ? cr - std::sqrt((cr - ex) * (cr - ex) + (cr - ey) * (cr - ey)) : std::min(ex, ey);
+                if (edge < 30) {
+                    float inset = 3.0f + fbm(x * 0.02f, y * 0.02f, coastSalt) * 20.0f + (fbm(x * 0.1f, y * 0.1f, coastSalt ^ 7u) - 0.5f) * 6.0f;
+                    if (edge < inset) r = -1;
+                }
+            }
+            if (r < 0) { t.ground = G_WATER; continue; }
+            bool woods = r == RG_FOREST_W || r == RG_FOREST_N;
             float e = fbm(x * 0.03f, y * 0.03f, s1);
             float m = fbm(x * 0.045f, y * 0.045f, s2);
-            float rk = fbm(x * 0.09f, y * 0.09f, s3);
             float dh = std::sqrt(float((x - homeTx) * (x - homeTx) + (y - homeTy) * (y - homeTy)));
             if (dh < 16) e = std::max(e, 0.6f);
-            t.variant = (uint8_t)(hash2(x, y, s3) & 255);
             // Grass is the default ground; bare earth and the drier scrub are the
             // minority, so the world does not read as one brown mass.
-            // Dead scrub (0.12v) in patches of its own, off the home ground: its own
-            // noise, so the dice below are rolled as before.
+            // Dead scrub (0.12v) in patches of its own, off the home ground.
             float dead = fbm(x * 0.022f, y * 0.022f, s1 ^ 0xDEADu);
+            // Ponds (0.13v) in the deepest hollows, away from the hatch.
+            if (e < waterLevel * 0.40f && dh > 40 && !woods && r != RG_CITY_W) { t.ground = G_WATER; continue; }
             if (e < waterLevel * 0.55f) t.ground = G_DIRT;    // worn hollows
-            else if (dead > 0.64f && dh > 30) t.ground = G_WASTE;
-            else if (m < desert) t.ground = G_SAND;           // drier scrub
+            else if (dead > 0.64f && dh > 30 && !woods) t.ground = G_WASTE;
+            else if (m < desert && !woods) t.ground = G_SAND; // drier scrub
             else t.ground = G_GRASS;
 
             if (t.ground == G_GRASS && rng.chance(0.03f)) t.worldDeco = Art::decoCode(Art::DK_TUFT, rng.irange(1, 255));
             else if (t.ground == G_DIRT && rng.chance(0.05f)) {
-                int r = rng.irange(1, 255);
-                t.worldDeco = Art::decoCode(r % 3 ? Art::DK_PEBBLE : Art::DK_FOREST, r / 3);
+                int k = rng.irange(1, 255);
+                t.worldDeco = Art::decoCode(k % 3 ? Art::DK_PEBBLE : Art::DK_FOREST, k / 3);
+            }
+            if (woods) {
+                // The woods (0.13v): trees close together, thinning in glades.
+                float thick = 0.30f + (m - 0.5f) * 0.5f;
+                if (t.ground != G_SAND && rng.chance(thick)) g.setSolid(x, y, S_TREE);
+                else if (rng.chance(0.05f)) g.setSolid(x, y, S_BUSH);
+                continue;
             }
             // The scrub keeps a few dead trees.
             if (t.ground == G_WASTE && hash2(x, y, s2 ^ 0x77u) % 90 == 0) g.setSolid(x, y, S_TREE);
             if (t.ground == G_GRASS && m > forestiness && rng.chance((m - forestiness) * 2.2f)) g.setSolid(x, y, S_TREE);
             else if (t.ground == G_GRASS && rng.chance(0.012f)) g.setSolid(x, y, S_TREE);
             else if (t.ground != G_SAND && rng.chance(0.01f)) g.setSolid(x, y, S_BUSH);
-            // Rocks and pebbles are gone from the world (0.6v). The dice are still
-            // rolled so every other part of a day's layout comes out as before.
-            if (rk > 0.72f && rng.chance(0.30f)) {}
-            else if (t.ground == G_SAND && rng.chance(0.006f)) {}
         }
 
-    // Map border.
-    for (int y = 0; y < h; y++)
-        for (int x = 0; x < w; x++)
-            if (x < 3 || y < 3 || x >= w - 3 || y >= h - 3) { at(x, y).solid = S_BOUNDARY; at(x, y).ground = G_DIRT; at(x, y).hp = -1; }
+    // Islets out in the sea, too far to reach: trees on a rock.
+    {
+        Rng ir(mix64(seed ^ 0x15137ull));
+        for (int i = 0, tries = 0; i < 14 && tries < 400; tries++) {
+            int cx = ir.irange(12, w - 13), cy = ir.irange(12, h - 13), rad = ir.irange(3, 8);
+            bool clear = true;
+            for (int k = 0; k < RG_COUNT && clear; k++) {
+                const Region& R = REGIONS[k];
+                if (cx > R.x0 - rad - 12 && cx < R.x0 + R.w + rad + 12 && cy > R.y0 - rad - 12 && cy < R.y0 + R.h + rad + 12) clear = false;
+            }
+            if (!clear) continue;
+            i++;
+            for (int y = cy - rad - 2; y <= cy + rad + 2; y++)
+                for (int x = cx - rad - 2; x <= cx + rad + 2; x++) {
+                    float d = std::sqrt(float((x - cx) * (x - cx) + (y - cy) * (y - cy)));
+                    if (d > rad * (0.75f + 0.5f * fbm(x * 0.3f, y * 0.3f, coastSalt ^ 0x1u))) continue;
+                    Tile& t = at(x, y);
+                    t.ground = d > rad - 2 ? G_DIRT : G_GRASS;
+                    if (ir.chance(0.45f)) g.setSolid(x, y, S_TREE);
+                }
+        }
+    }
 
     // Home compound.
     g.clearArea(homeTx - 9, homeTy - 9, 19, 19, G_DIRT);
@@ -1997,30 +2268,50 @@ void World::generate(uint64_t seedIn, int day) {
         }
     }
 
-    // The cities (0.11v): out towards the edge of the bigger map, all the way round,
-    // too far to walk to and back in a day. You need a car.
-    if (big) {
-        Rng cr(mix64(seed ^ 0xC17A11E5ull));
-        int n = cr.irange(4, 5);
-        float a0 = cr.range(0, 2 * PI);
-        for (int i = 0; i < n; i++) {
-            int cw = cr.irange(84, 112), ch = cr.irange(66, 88);
-            for (int attempt = 0; attempt < 30; attempt++) {
-                float a = a0 + i * (2 * PI / n) + cr.range(-0.25f, 0.25f);
-                float rad = cr.range(168, 200);
-                int cx = (int)(homeTx + std::cos(a) * rad) - cw / 2, cy = (int)(homeTy + std::sin(a) * rad) - ch / 2;
-                cx = std::clamp(cx, 8, w - 9 - cw);
-                cy = std::clamp(cy, 8, h - 9 - ch);
-                bool ok = true;
-                for (const CityZone& o : cities)
-                    if (cx < o.x0 + o.w + 24 && cx + cw + 24 > o.x0 && cy < o.y0 + o.h + 24 && cy + ch + 24 > o.y0) ok = false;
-                int ddx = cx + cw / 2 - homeTx, ddy = cy + ch / 2 - homeTy;
-                if (ddx * ddx + ddy * ddy < 130 * 130) ok = false;
-                if (!ok) continue;
-                g.city(cx, cy, cw, ch);
-                break;
+    // Rivers (0.13v): one across the home ground, one through each wood and one in the
+    // east, with wooden footbridges over them now and then (the highways get bridges
+    // of their own).
+    {
+        Rng rr(mix64(seed ^ 0x61FE5ull));
+        auto run = [&](float x, float y, float dir, float width) {
+            std::vector<Vec2> path = g.river(x, y, dir, 900, width, rr.next());
+            g.footbridges(path, 44);
+        };
+        const Region& FW = REGIONS[RG_FOREST_W];
+        const Region& FN = REGIONS[RG_FOREST_N];
+        const Region& EA = REGIONS[RG_EAST];
+        run((float)(HOME.x0 + rr.irange(36, 80)), (float)HOME.y0, PI * 0.5f + rr.range(0.25f, 0.5f), rr.range(3.5f, 5.0f));
+        run((float)(FW.x0 + rr.irange(30, FW.w - 30)), (float)FW.y0, PI * 0.5f + rr.range(-0.3f, 0.3f), rr.range(3.0f, 4.5f));
+        run((float)FN.x0, (float)(FN.y0 + rr.irange(24, FN.h - 24)), rr.range(-0.3f, 0.3f), rr.range(3.0f, 4.0f));
+        run((float)(EA.x0 + rr.irange(40, EA.w - 40)), (float)(EA.y0 + EA.h), -PI * 0.5f + rr.range(-0.35f, 0.35f), rr.range(4.0f, 6.0f));
+    }
+    // Muddy banks: the land along the water is bare earth.
+    {
+        std::vector<uint8_t> bank(tiles.size(), 0);
+        for (int y = 1; y < h - 1; y++)
+            for (int x = 1; x < w - 1; x++) {
+                if (at(x, y).ground == G_WATER) continue;
+                for (int k = 0; k < 8; k++) {
+                    static const int DX[8] = {1, -1, 0, 0, 1, 1, -1, -1}, DY[8] = {0, 0, 1, -1, 1, -1, 1, -1};
+                    if (at(x + DX[k], y + DY[k]).ground == G_WATER) { bank[y * w + x] = 1; break; }
+                }
             }
-        }
+        for (size_t i = 0; i < tiles.size(); i++)
+            if (bank[i] && (tiles[i].ground == G_GRASS || tiles[i].ground == G_SAND || tiles[i].ground == G_WASTE)) {
+                tiles[i].ground = G_DIRT;
+                if (tiles[i].solid == S_TREE && (hash2((int)(i % w), (int)(i / w), s2) & 1)) { tiles[i].solid = S_NONE; tiles[i].hp = 0; }
+            }
+    }
+
+    // The city (0.11v; 0.13v: always to the west, across the woods): too far to walk to
+    // and back in a day. You need a car.
+    {
+        const Region& C = REGIONS[RG_CITY_W];
+        Rng cr(mix64(seed ^ 0xC17A11E5ull));
+        Gen cg{*this, cr, day};
+        cg.roadW = g.roadW;
+        cg.city(C.x0 + 17, C.y0 + 20, C.w - 30, C.h - 40);
+        g.floorPlans.insert(g.floorPlans.end(), cg.floorPlans.begin(), cg.floorPlans.end());
     }
     auto nearCity = [&](int x, int y, int margin) {
         for (const CityZone& c : cities)
@@ -2028,14 +2319,14 @@ void World::generate(uint64_t seedIn, int day) {
         return false;
     };
 
-    // Points of interest.
+    // Points of interest on the home ground, as the old map had them.
     std::vector<Poi> pois;
-    int wantPois = (int)(rng.irange(9, 12) * more);
-    for (int attempt = 0; attempt < (int)(400 * more) && (int)pois.size() < wantPois; attempt++) {
-        int x = rng.irange(22, w - 23), y = rng.irange(22, h - 23);
+    int wantPois = rng.irange(9, 12);
+    for (int attempt = 0; attempt < 600 && (int)pois.size() < wantPois; attempt++) {
+        int x = rng.irange(HOME.x0 + 22, HOME.x0 + HOME.w - 23), y = rng.irange(HOME.y0 + 22, HOME.y0 + HOME.h - 23);
         int dx = x - homeTx, dy = y - homeTy;
         if (dx * dx + dy * dy < 50 * 50) continue;
-        if (nearCity(x, y, 26)) continue;
+        if (nearCity(x, y, 26) || g.nearWater(x, y, 13)) continue;
         bool ok = true;
         for (auto& p : pois) if ((p.x - x) * (p.x - x) + (p.y - y) * (p.y - y) < 38 * 38) ok = false;
         if (!ok) continue;
@@ -2067,12 +2358,30 @@ void World::generate(uint64_t seedIn, int day) {
         }
         if (best >= 0 && rng.chance(0.8f)) g.road(pois[i].x, pois[i].y, pois[best].x, pois[best].y);
     }
-    // Highways (0.11v): four lanes, straight out from the bunker to every city.
-    if (big) {
+    // Highways (0.11v; 0.13v: the island's crossroads): four lanes west to the city and
+    // east to the radio hill below the bunker, north to the army base and south to the
+    // suburb beside it, over the water on bridges. A bridge whose far side has not
+    // opened yet is closed by a roadblock halfway over.
+    {
         Rng hr(mix64(seed ^ 0x416E3A7ull));
         Gen hw{*this, hr, day};
         hw.roadW = 4;
-        for (const CityZone& c : cities) hw.road(homeTx - 1, homeTy + 9, c.x0 + c.w / 2, c.y0 + c.h / 2);
+        const int hy = homeTy + 12, vx = homeTx - 16;
+        const Region &C = REGIONS[RG_CITY_W], &M = REGIONS[RG_MILITARY], &E = REGIONS[RG_EAST], &S = REGIONS[RG_SOUTH];
+        hw.road(vx, hy, C.x0 + C.w - 14, hy);
+        hw.road(vx, hy, E.x0 + E.w / 2, hy);
+        hw.road(vx, hy, vx, M.y0 + M.h / 2);
+        hw.road(vx, hy, vx, S.y0 + S.h / 2);
+        auto gapX = [&](int leftRegion, int rightRegion) { const Region& L = REGIONS[leftRegion]; return (L.x0 + L.w + REGIONS[rightRegion].x0) / 2; };
+        auto gapY = [&](int upRegion, int downRegion) { const Region& U = REGIONS[upRegion]; return (U.y0 + U.h + REGIONS[downRegion].y0) / 2; };
+        int x;
+        x = gapX(RG_CITY_W, RG_FOREST_W); if (day < REGIONS[RG_CITY_W].day) hw.roadblock(x - 1, hy, x, hy + 3, REGIONS[RG_CITY_W].day);
+        x = gapX(RG_FOREST_W, RG_HOME); if (day < REGIONS[RG_FOREST_W].day) hw.roadblock(x - 1, hy, x, hy + 3, REGIONS[RG_FOREST_W].day);
+        x = gapX(RG_HOME, RG_EAST); if (day < REGIONS[RG_EAST].day) hw.roadblock(x - 1, hy, x, hy + 3, REGIONS[RG_EAST].day);
+        int y;
+        y = gapY(RG_MILITARY, RG_FOREST_N); if (day < REGIONS[RG_MILITARY].day) hw.roadblock(vx, y - 1, vx + 3, y, REGIONS[RG_MILITARY].day);
+        y = gapY(RG_FOREST_N, RG_HOME); if (day < REGIONS[RG_FOREST_N].day) hw.roadblock(vx, y - 1, vx + 3, y, REGIONS[RG_FOREST_N].day);
+        y = gapY(RG_HOME, RG_SOUTH); if (day < REGIONS[RG_SOUTH].day) hw.roadblock(vx, y - 1, vx + 3, y, REGIONS[RG_SOUTH].day);
     }
     // Re-clear the compound gate area after roads.
     for (int y = homeTy + 4; y <= homeTy + 8; y++)
@@ -2106,13 +2415,20 @@ void World::generate(uint64_t seedIn, int day) {
 
     // Scattered cabins and sheds.
     g.bkind = BK_CABIN;
-    for (int i = 0; i < (int)(22 * more); i++) {
+    for (int i = 0; i < 22; i++) {
         int bw = rng.irange(5, 8), bh = rng.irange(5, 7);
-        int x = rng.irange(8, w - 16), y = rng.irange(8, h - 16);
+        int x = rng.irange(HOME.x0 + 8, HOME.x0 + HOME.w - 16), y = rng.irange(HOME.y0 + 8, HOME.y0 + HOME.h - 16);
         float ruin = rng.chance(0.4f) ? 0.15f : 0;
         int wall = ruin > 0 ? S_WALL_BRICK : (rng.chance(0.55f) ? S_WALL_WOOD : S_WALL_CONCRETE);
         if (g.building(x, y, bw, bh, wall, rng.chance(0.5f) ? G_FLOOR_WOOD : G_FLOOR_CONCRETE, LootKind::Generic, 1, 2, ruin))
             if (rng.chance(0.5f)) g.spawnGroup(x + bw / 2, y + bh / 2, 1, 5);
+    }
+    // The woods (0.13v): trails off the highway to clearings in the trees.
+    {
+        Rng fr(mix64(seed ^ 0xF02E57ull));
+        Gen fg{*this, fr, day};
+        fg.forest(REGIONS[RG_FOREST_W], true);
+        fg.forest(REGIONS[RG_FOREST_N], false);
     }
 
     // Abandoned cars and street lights along the roads.
@@ -2159,7 +2475,7 @@ void World::generate(uint64_t seedIn, int day) {
         // chosen road tile until the road ends and stand the pole on the first clear
         // tile past the edge, with the arm leaning back over the road it lights.
         static const int LDX[4] = {0, 0, 1, -1}, LDY[4] = {-1, 1, 0, 0};
-        for (int i = 0; i < (int)(30 * more) && !roadTiles.empty(); i++) {
+        for (int i = 0; i < (big ? 96 : 60) && !roadTiles.empty(); i++) {
             auto [cx, cy] = roadTiles[rng.next() % roadTiles.size()];
             int first = (int)(rng.next() % 4);
             for (int k = 0; k < 4; k++) {
@@ -2185,8 +2501,8 @@ void World::generate(uint64_t seedIn, int day) {
     }
 
     // Loose bags lying around.
-    for (int i = 0; i < (int)(26 * more); i++) {
-        int x = rng.irange(5, w - 6), y = rng.irange(5, h - 6);
+    for (int i = 0; i < 26; i++) {
+        int x = rng.irange(HOME.x0 + 5, HOME.x0 + HOME.w - 6), y = rng.irange(HOME.y0 + 5, HOME.y0 + HOME.h - 6);
         int dx = x - homeTx, dy = y - homeTy;
         if (blocksMove(x, y) || dx * dx + dy * dy < 20 * 20 || g.reserved(x, y)) continue;
         int id = addContainer(tileCenter(x, y), CK_BAG, -1, -1, (uint8_t)rng.next());
@@ -2194,9 +2510,9 @@ void World::generate(uint64_t seedIn, int day) {
     }
 
     // Wandering enemies.
-    int wanderers = (int)((9 + day) * (big ? 2.5f : 1.0f));
+    int wanderers = 9 + day;
     for (int i = 0; i < wanderers; i++) {
-        int x = rng.irange(6, w - 7), y = rng.irange(6, h - 7);
+        int x = rng.irange(HOME.x0 + 6, HOME.x0 + HOME.w - 7), y = rng.irange(HOME.y0 + 6, HOME.y0 + HOME.h - 7);
         g.spawnGroup(x, y, 1, 3);
     }
 
@@ -2261,19 +2577,51 @@ void World::generate(uint64_t seedIn, int day) {
         }
         // More packs out on the open ground, away from the houses.
         int extra = 12 + day;
-        for (int k = 0, tries = 0; k < extra && tries < 400; tries++) {
+        for (int k = 0, tries = 0; k < extra && tries < 4000; tries++) {
             int tx = zr.irange(8, outW - 9), ty = zr.irange(8, outH - 9);
             int dx = tx - homeTx, dy = ty - homeTy;
-            if (blocksMove(tx, ty) || at(tx, ty).ground == G_WATER || dx * dx + dy * dy < (HOME_SAFE_TILES + 6) * (HOME_SAFE_TILES + 6)) continue;
+            if (!unlockedAt(tx, ty) || blocksMove(tx, ty) || at(tx, ty).ground == G_WATER || dx * dx + dy * dy < (HOME_SAFE_TILES + 6) * (HOME_SAFE_TILES + 6)) continue;
             pack(tileCenter(tx, ty), zr.irange(4, 7));
             k++;
         }
         spawns = std::move(packs);
     }
 
+    // Nothing waits on the land that has not opened yet (0.13v): it is only scenery.
+    spawns.erase(std::remove_if(spawns.begin(), spawns.end(), [&](const EnemySpawn& sp) {
+        if (sp.crypt) return false;
+        Vec2 p = surfacePos(sp.pos);
+        int tx = toTile(p.x), ty = toTile(p.y);
+        if (tx >= outW || ty >= outH) return false;
+        return !unlockedAt(tx, ty);
+    }), spawns.end());
+
+    // The sea is on every map (0.13v): the coasts show the shape of the island from the
+    // start, the land itself is revealed as you go.
+    for (int y = 0; y < outH; y++)
+        for (int x = 0; x < outW; x++)
+            if (at(x, y).ground == G_WATER) at(x, y).explored = 1;
+
     dressWorld(*this, seed);
     indexProps();
     rebuildMap();
+    if (const char* dump = std::getenv("OUTBOUND_MAPDUMP")) {
+        // Dev: the whole outside as a picture, everything seen (binary PPM).
+        if (FILE* f = std::fopen(dump, "wb")) {
+            std::fprintf(f, "P6 %d %d 255\n", outW, outH);
+            for (int y = 0; y < outH; y++)
+                for (int x = 0; x < outW; x++) {
+                    const Tile& t = at(x, y);
+                    bool obstacle = t.solid != S_NONE && solidInfo(t.solid).blocksMove && t.solid != S_FURNITURE;
+                    int pc = obstacle ? solidInfo(t.solid).mapColor : GROUND_MAP_COLOR[t.ground];
+                    if (t.solid == S_ROADBLOCK) pc = P_CORAL;
+                    uint32_t hex = PALETTE_HEX[pc];
+                    unsigned char px[3] = {(unsigned char)(hex >> 16), (unsigned char)(hex >> 8), (unsigned char)hex};
+                    std::fwrite(px, 1, 3, f);
+                }
+            std::fclose(f);
+        }
+    }
     std::fprintf(stderr, "[world] day %d: %dx%d, %zu cities, %zu floors, %zu spawns, %zu containers, %zu props\n", day, outW, outH,
                  cities.size(), floors.size(), spawns.size(), containers.size(), props.size());
 }

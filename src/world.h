@@ -24,6 +24,7 @@ enum Solid : uint8_t {
     // health lives on the Barricade, not the tile. Gates open for you and your people.
     S_BARRICADE, S_GATE, S_GATE_OPEN,
     S_FENCE_GATE, S_FENCE_GATE_OPEN,   // 0.12v: the compound fence's wire gates
+    S_ROADBLOCK,               // 0.13v: a bridge closed until its region opens (variant = that day)
     S_COUNT
 };
 
@@ -65,6 +66,8 @@ enum Tone : uint8_t { TONE_AUTO, TONE_GREEN, TONE_DARK, TONE_BLEAK, TONE_ORANGE,
 enum TileFlag : uint8_t {
     TF_KERB = 1,               // a planter (grass or earth) edged with a kerb where it ends
     TF_IRON = 2,               // 0.12v: an S_FENCE of wrought iron (Tiles/Iron-Fence) rather than wire
+    TF_PLANKS = 4,             // 0.13v: a G_BRIDGE of wooden planks (a footbridge over a river)
+    TF_TRAIL = 8,              // 0.13v: a forest trail (worn earth, kept clear of trees)
 };
 
 // ---- the bigger world (0.11v) ------------------------------------------------------
@@ -74,7 +77,34 @@ enum TileFlag : uint8_t {
 constexpr int CITY_DAY = 5;
 // The catacombs open on day 3 (0.11v): the trader brings you a locator that morning.
 constexpr int CRYPT_DAY = 3;
-inline int outsideSize(int day) { return day >= CITY_DAY ? 536 : 240; }
+// ---- the island (0.13v) --------------------------------------------------------------
+// The outside is one map from the first day: land in regions with the sea round them
+// and rivers between, joined by highway bridges. The home ground is open from day 1; the
+// rest can be seen across the water, and its bridges are closed by roadblocks until the
+// day it opens: the west forest and its city on day 5, the north forest and the army base
+// on day 7, the east (the radio tower and the survivors' camp) on day 12, the ruined
+// suburb and the metro to the south on day 15. Day 10 brings the infected (raid.cpp).
+constexpr int WORLD_SIZE = 720;
+constexpr int MILITARY_DAY = 7;
+constexpr int INFECTED_DAY = 10;
+constexpr int RADIO_DAY = 12;
+constexpr int METRO_DAY = 15;
+inline int outsideSize(int) { return WORLD_SIZE; }
+
+enum RegionId : uint8_t { RG_HOME, RG_FOREST_W, RG_CITY_W, RG_FOREST_N, RG_MILITARY, RG_EAST, RG_SOUTH, RG_COUNT };
+struct Region {
+    int x0, y0, w, h;
+    int day;                   // the day its bridge opens
+    const char* name;
+    bool contains(int x, int y) const { return x >= x0 && y >= y0 && x < x0 + w && y < y0 + h; }
+    int cx() const { return x0 + w / 2; }
+    int cy() const { return y0 + h / 2; }
+};
+extern const Region REGIONS[RG_COUNT];
+inline int regionAtTile(int x, int y) {
+    for (int i = 0; i < RG_COUNT; i++) if (REGIONS[i].contains(x, y)) return i;
+    return -1;
+}
 
 // A city: its streets and blocks, in tiles.
 struct CityZone {
@@ -272,6 +302,9 @@ struct World {
         const Floor& fl = floors[f];
         return p + Vec2((float)(fl.bx - fl.x0) * 16, (float)(fl.by - fl.y0) * 16);
     }
+    // 0.13v: which region a tile is in (-1 the sea, or below), and whether it is open today.
+    int regionAt(int tx, int ty) const { return tx < outW && ty < outH ? regionAtTile(tx, ty) : -1; }
+    bool unlockedAt(int tx, int ty) const { int r = regionAt(tx, ty); return r >= 0 && REGIONS[r].day <= day; }
     int cityAt(int tx, int ty) const { for (size_t i = 0; i < cities.size(); i++) if (cities[i].contains(tx, ty)) return (int)i; return -1; }
     // How good the loot is here, 0..1: better the further out, and in the cities.
     float lootQuality(int tx, int ty) const;

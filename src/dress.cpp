@@ -55,7 +55,7 @@ struct Dresser {
     // The bunker compound and the mechanic's yard keep their own look.
     bool compound(int x, int y) const {
         if (std::abs(x - W.homeTx) <= 11 && y - W.homeTy >= -11 && y - W.homeTy <= 10) return true;
-        if (ow > 240 && x >= W.homeTx + 9 && x <= W.homeTx + 25 && y >= W.homeTy - 9 && y <= W.homeTy + 10) return true;
+        if (W.day >= CITY_DAY && x >= W.homeTx + 9 && x <= W.homeTx + 25 && y >= W.homeTy - 9 && y <= W.homeTy + 10) return true;
         return false;
     }
     bool isBusy(int x, int y) const { return !W.inBounds(x, y) || busy[(size_t)y * W.w + x]; }

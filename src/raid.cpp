@@ -254,7 +254,7 @@ float carOverlapHook(float x, float y, float r) {
 }
 
 // The mechanic's yard lies just east of the bunker compound (see World::generate).
-bool mechanicOut() { return G.world.day >= CITY_DAY && G.world.outW > 240; }
+bool mechanicOut() { return G.world.day >= CITY_DAY && G.world.outW >= WORLD_SIZE; }
 Vec2 mechanicHome() { return World::tileCenter(G.world.homeTx + 17, G.world.homeTy + 1); }
 // Where a player's car waits in the yard: a row of bays in front of the workshop.
 Vec2 garageBay(int slot) {
@@ -4245,6 +4245,17 @@ void applyDayMemory() {
         if (m.spawnDead[i]) G.enemies[i].dead = true;
 }
 
+// The morning a region opens (0.13v), and the morning the infected come.
+void announceUnlocks() {
+    int d = G.prof.day;
+    if (d == CITY_DAY) pushMessage(T("The west bridges are open: through the woods to the city. Take the car."), P_YELLOW);
+    if (d == MILITARY_DAY) pushMessage(T("The north bridges are open: past the woods lies the army base."), P_YELLOW);
+    if (d == INFECTED_DAY) pushMessage(T("Something has changed in the dead. Some of them run now."), P_CORAL);
+    if (d == RADIO_DAY) pushMessage(T("The east bridge is open: there is a radio tower on the hill."), P_YELLOW);
+    if (d == METRO_DAY) pushMessage(T("The south bridge is open: the old suburb, and the metro under it."), P_YELLOW);
+}
+
+
 static void localSeatsOut();
 static void beginRaid(bool resume) {
     Profile& p = G.prof;
@@ -4407,8 +4418,7 @@ static void beginRaid(bool resume) {
     // Your car, where you left it (or at the mechanic's), and the mechanic himself.
     spawnMyCar();
     resetMechanic();
-    if (mechanicOut() && G.prof.day == CITY_DAY && !resume && !G.prof.mechanicMet)
-        pushMessage(T("The land has opened up: there are cities out past the fields now."), P_YELLOW);
+    if (!resume) announceUnlocks();
     Atmo::reset();
     bigText(T("DAY") + " " + std::to_string(p.day) + " - " + fmtTime(p.timeMin), P_WHITE, 3);
     if (resume) {
@@ -4990,6 +5000,21 @@ static void localRaidUpdate(float dt) {
     uploadMap(dt);
 }
 
+// Walk up to a closed bridge (0.13v) and you are told when it opens.
+void roadblockHint(float dt) {
+    static float cool = 0;
+    cool -= dt;
+    if (cool > 0) return;
+    int px = World::toTile(G.player.pos.x), py = World::toTile(G.player.pos.y);
+    for (int y = py - 3; y <= py + 3; y++)
+        for (int x = px - 3; x <= px + 3; x++)
+            if (G.world.inBounds(x, y) && G.world.at(x, y).solid == S_ROADBLOCK) {
+                pushMessage(T1("Road closed. The bridge opens on day {0}.", std::to_string(G.world.at(x, y).variant)), P_ORANGE);
+                cool = 12;
+                return;
+            }
+}
+
 void raid_update(float dt) {
     // --perf: how long the raid's own work takes, every five seconds.
     struct PerfLog { double t0 = 0, sum = 0, worst = 0; int n = 0; ~PerfLog() {} };
@@ -5051,6 +5076,7 @@ void raid_update(float dt) {
     updateBullets(dt);
     updateGrenades(dt);
     updateEffects(dt);
+    roadblockHint(dt);
 
     // Camera with a little look-ahead toward the cursor.
     Vec2 screen(R::viewW() / 2.0f, R::viewH() / 2.0f);
@@ -6269,6 +6295,17 @@ void drawMapPanel() {
     // The surface, or (below) only the catacomb you are in.
     int crypt = localCrypt();
     float rx0 = 0, ry0 = 0, rw = (float)G.world.outW, rh = (float)G.world.outH;
+    if (crypt < 0 && G.world.outW >= WORLD_SIZE) {
+        // The island (0.13v): framed on the land that is open, and the regions next to it.
+        int bx0 = 1 << 20, by0 = 1 << 20, bx1 = 0, by1 = 0;
+        for (const Region& r : REGIONS)
+            if (r.day <= G.world.day) { bx0 = std::min(bx0, r.x0); by0 = std::min(by0, r.y0); bx1 = std::max(bx1, r.x0 + r.w); by1 = std::max(by1, r.y0 + r.h); }
+        float side = (float)std::max(bx1 - bx0, by1 - by0) + 80;
+        side = std::min(side, (float)G.world.outW);
+        rx0 = clampf((bx0 + bx1) * 0.5f - side * 0.5f, 0, G.world.outW - side);
+        ry0 = clampf((by0 + by1) * 0.5f - side * 0.5f, 0, G.world.outH - side);
+        rw = rh = side;
+    }
     if (crypt >= 0) {
         const Dungeon& d = G.world.dungeons[crypt];
         rx0 = (float)d.x0; ry0 = (float)d.y0; rw = (float)d.w; rh = (float)d.h;
@@ -6280,6 +6317,18 @@ void drawMapPanel() {
     float sc = size / rw;
     const Profile& p = G.prof;
     Vec2 origin = Vec2(x, y) - Vec2(rx0, ry0) * sc;
+    // The land that has not opened yet: its outline, and the day it does.
+    if (crypt < 0 && G.world.outW >= WORLD_SIZE)
+        for (const Region& r : REGIONS) {
+            if (r.day <= G.world.day) continue;
+            Vec2 a = Vec2((float)r.x0, (float)r.y0) * sc + origin, b = Vec2((float)(r.x0 + r.w), (float)(r.y0 + r.h)) * sc + origin;
+            if (b.x < x || b.y < y || a.x > x + size || a.y > y + size) continue;
+            a.x = std::max(a.x, x); a.y = std::max(a.y, y); b.x = std::min(b.x, x + size); b.y = std::min(b.y, y + size);
+            R::rect(a.x, a.y, b.x - a.x, b.y - a.y, pal(P_DARK, 0.35f));
+            std::string lbl = T1("Day {0}", std::to_string(r.day));
+            float cx = std::floor((a.x + b.x) * 0.5f - R::textWidth(lbl) * 0.5f), cy = std::floor((a.y + b.y) * 0.5f - 3);
+            R::text(lbl, cx, cy, pal(P_LAVENDER));
+        }
     Vec2 home = hatchPos() / (float)TILE * sc + origin;
     if (p.hasHomeMarker() && crypt < 0) R::sprite(HOME_ICON, home);
     // Catacomb doors on the surface map once you have seen them.

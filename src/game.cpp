@@ -335,11 +335,122 @@ void sceneFlush() {
     s_scene.clear();
 }
 
+// Whether the view is on the surface of a world with rock below it (0.13v): then only
+// the outside is drawn, and past its edge is open sea.
+static bool viewOnSurface(const World& w, Vec2 cam) {
+    if (w.outW <= 0 || (w.outW >= w.w && w.outH >= w.h)) return false;
+    int cx = World::toTile(cam.x + R::viewW() * 0.5f), cy = World::toTile(cam.y + R::viewH() * 0.5f);
+    return cx < w.outW && cy < w.outH;
+}
+
 static void viewRange(World& w, Vec2 cam, int& x0, int& y0, int& x1, int& y1, int marginBelow = 0) {
     x0 = std::max(0, (int)std::floor(cam.x / TILE) - 2);
     y0 = std::max(0, (int)std::floor(cam.y / TILE) - 2);
     x1 = std::min(w.w - 1, (int)std::floor((cam.x + R::viewW()) / TILE) + 2);
     y1 = std::min(w.h - 1, (int)std::floor((cam.y + R::viewH()) / TILE) + 2 + marginBelow);
+    if (viewOnSurface(w, cam)) { x1 = std::min(x1, w.outW - 1); y1 = std::min(y1, w.outH - 1); }
+}
+
+// ---- water (0.13v): drawn, not tiled. Deep out in the sea, lighter in the shallows,
+// foam where it laps at the land, and glints drifting over it.
+static bool wetTile(const World& w, int x, int y) {
+    if (x < 0 || y < 0 || x >= w.outW || y >= w.outH) return true;   // the open sea past the edge
+    int g = w.at(x, y).ground;
+    return g == G_WATER || g == G_BRIDGE;
+}
+// How far each tile in view is from the land (0 land, up to 4), worked out once a frame
+// so the water can shade smoothly from the shallows out to the deep.
+static struct { int x0 = 0, y0 = 0, w = 0, h = 0; std::vector<uint8_t> d; } s_wd;
+static void prepareWater(const World& w, int x0, int y0, int x1, int y1) {
+    s_wd.x0 = x0; s_wd.y0 = y0; s_wd.w = x1 - x0 + 1; s_wd.h = y1 - y0 + 1;
+    s_wd.d.assign((size_t)s_wd.w * s_wd.h, 4);
+    for (int y = y0; y <= y1; y++)
+        for (int x = x0; x <= x1; x++) {
+            int best = 4;
+            if (!wetTile(w, x, y)) best = 0;
+            else
+                for (int r = 1; r <= 3 && best == 4; r++)
+                    for (int oy = -r; oy <= r && best == 4; oy++)
+                        for (int ox = -r; ox <= r; ox++)
+                            if ((std::abs(ox) == r || std::abs(oy) == r) && !wetTile(w, x + ox, y + oy)) { best = r; break; }
+            s_wd.d[(size_t)(y - y0) * s_wd.w + (x - x0)] = (uint8_t)best;
+        }
+}
+static float waterDepthAt(int x, int y) {
+    int ix = x - s_wd.x0, iy = y - s_wd.y0;
+    if (ix < 0 || iy < 0 || ix >= s_wd.w || iy >= s_wd.h) return 1.0f;
+    return s_wd.d[(size_t)iy * s_wd.w + ix] / 4.0f;
+}
+static void drawWaterTile(const World& w, int x, int y, float time) {
+    float px = (float)x * TILE, py = (float)y * TILE;
+    int nearLand = (int)(waterDepthAt(x, y) * 4.0f + 0.5f) - 1;
+    // Each corner shaded by the four tiles round it, from the shallows to the deep, and
+    // slow swells of lighter and darker water over that.
+    auto corner = [&](int cx, int cy) {
+        float d = (waterDepthAt(cx - 1, cy - 1) + waterDepthAt(cx, cy - 1) + waterDepthAt(cx - 1, cy) + waterDepthAt(cx, cy)) * 0.25f;
+        float swell = std::sin(time * 0.6f + cx * 0.45f + cy * 0.3f) * 0.5f + std::sin(time * 0.37f - cx * 0.2f + cy * 0.55f) * 0.5f;
+        float k = 1.0f + swell * 0.04f;
+        Color shallow(0.30f, 0.54f, 0.58f), deep(0.14f, 0.31f, 0.44f);
+        return Color((shallow.r + (deep.r - shallow.r) * d) * k, (shallow.g + (deep.g - shallow.g) * d) * k, (shallow.b + (deep.b - shallow.b) * d) * k);
+    };
+    R::gradRect(px, py, TILE, TILE, corner(x, y), corner(x + 1, y), corner(x + 1, y + 1), corner(x, y + 1));
+    // Glints: short bright dashes that come and go.
+    uint32_t hsh = hash2(x, y, 0x3A7Eu);
+    for (int i = 0; i < 2; i++) {
+        uint32_t hh = hsh >> (i * 11);
+        float ph = time * (0.7f + (hh & 7) * 0.08f) + (hh & 255) * 0.1f;
+        float a = std::sin(ph);
+        if (a <= 0.55f) continue;
+        float gx = px + (float)((hh >> 3) % 12), gy = py + (float)((hh >> 7) % 14);
+        R::rect(std::floor(gx + std::fmod(time * 1.5f + (hh & 15), 3.0f)), gy, 3, 1, Color(0.75f, 0.88f, 0.92f, (a - 0.55f) * 1.1f));
+    }
+    // Foam along the shore, breathing in and out.
+    if (nearLand == 0) {
+        float f = 0.45f + 0.2f * std::sin(time * 1.8f + x * 0.9f + y * 0.6f);
+        Color foam(0.86f, 0.93f, 0.95f, f);
+        Color wet(0.86f, 0.93f, 0.95f, f * 0.35f);
+        auto land = [&](int ox, int oy) { return !wetTile(w, x + ox, y + oy); };
+        float wob = std::floor(1.0f + std::sin(time * 1.8f + x * 0.9f + y * 0.6f));
+        if (land(-1, 0)) { R::rect(px, py, 2, TILE, foam); R::rect(px + 2, py, 1 + wob, TILE, wet); }
+        if (land(1, 0)) { R::rect(px + TILE - 2, py, 2, TILE, foam); R::rect(px + TILE - 3 - wob, py, 1 + wob, TILE, wet); }
+        if (land(0, -1)) { R::rect(px, py, TILE, 2, foam); R::rect(px, py + 2, TILE, 1 + wob, wet); }
+        if (land(0, 1)) { R::rect(px, py + TILE - 2, TILE, 2, foam); R::rect(px, py + TILE - 3 - wob, TILE, 1 + wob, wet); }
+        if (land(-1, -1) && !land(-1, 0) && !land(0, -1)) R::rect(px, py, 3, 3, foam);
+        if (land(1, -1) && !land(1, 0) && !land(0, -1)) R::rect(px + TILE - 3, py, 3, 3, foam);
+        if (land(-1, 1) && !land(-1, 0) && !land(0, 1)) R::rect(px, py + TILE - 3, 3, 3, foam);
+        if (land(1, 1) && !land(1, 0) && !land(0, 1)) R::rect(px + TILE - 3, py + TILE - 3, 3, 3, foam);
+    }
+}
+// A bridge over the water: planks for a footbridge, the highway's asphalt otherwise,
+// with a rail along each side that has water beyond it.
+static void drawBridgeTile(const World& w, int x, int y, float time) {
+    const Tile& t = w.at(x, y);
+    float px = (float)x * TILE, py = (float)y * TILE;
+    auto water = [&](int ox, int oy) { return w.inBounds(x + ox, y + oy) && w.at(x + ox, y + oy).ground == G_WATER; };
+    bool wl = water(-1, 0), wr = water(1, 0), wu = water(0, -1), wd = water(0, 1);
+    if (t.flags & TF_PLANKS) {
+        // Which way it runs: along the side that is not open water.
+        bool across = wu || wd;   // water above or below: the planks run east-west
+        Color wood(0.47f, 0.33f, 0.21f), seam(0.30f, 0.20f, 0.13f), light(0.58f, 0.43f, 0.28f);
+        R::rect(px, py, TILE, TILE, wood);
+        for (int i = 0; i < 16; i += 4) {
+            uint32_t hh = hash2(x * 4 + i, y, 0x91Au);
+            Color plank = (hh & 3) == 0 ? light : wood;
+            if (across) { R::rect(px + i, py, 3, TILE, plank); R::rect(px + i + 3, py, 1, TILE, seam); }
+            else { R::rect(px, py + i, TILE, 3, plank); R::rect(px, py + i + 3, TILE, 1, seam); }
+        }
+        Color rail(0.36f, 0.24f, 0.15f);
+        if (wu) R::rect(px, py, TILE, 2, rail);
+        if (wd) { R::rect(px, py + TILE - 2, TILE, 2, rail); }
+        if (wl) R::rect(px, py, 2, TILE, rail);
+        if (wr) R::rect(px + TILE - 2, py, 2, TILE, rail);
+        return;
+    }
+    Color rail(0.62f, 0.64f, 0.66f), post(0.40f, 0.42f, 0.45f), shade(0, 0, 0, 0.25f);
+    if (wu) { R::rect(px, py, TILE, 2, rail); R::rect(px + (x & 1) * 8, py, 2, 3, post); }
+    if (wd) { R::rect(px, py + TILE - 3, TILE, 2, rail); R::rect(px + (x & 1) * 8, py + TILE - 4, 2, 3, post); R::rect(px, py + TILE - 1, TILE, 1, shade); }
+    if (wl) { R::rect(px, py, 2, TILE, rail); R::rect(px, py + (y & 1) * 8, 3, 2, post); }
+    if (wr) { R::rect(px + TILE - 2, py, 2, TILE, rail); R::rect(px + TILE - 3, py + (y & 1) * 8, 3, 2, post); }
 }
 
 // ---- the catacombs' art (Szadi Art's Rogue Fantasy Catacombs, cut by
@@ -425,11 +536,23 @@ static void drawAmbientOcclusion(const World& w, int x0, int y0, int x1, int y1)
 void drawWorldTiles(World& w, Vec2 cam, float timeSec) {
     int x0, y0, x1, y1;
     viewRange(w, cam, x0, y0, x1, y1);
+    {
+        int ax0 = (int)std::floor(cam.x / TILE) - 2, ay0 = (int)std::floor(cam.y / TILE) - 2;
+        int ax1 = (int)std::floor((cam.x + R::viewW()) / TILE) + 2, ay1 = (int)std::floor((cam.y + R::viewH()) / TILE) + 2;
+        prepareWater(w, ax0 - 1, ay0 - 1, ax1 + 1, ay1 + 1);
+        // The open sea past the edge of the map (0.13v).
+        if (viewOnSurface(w, cam))
+        for (int y = ay0; y <= ay1; y++)
+            for (int x = ax0; x <= ax1; x++)
+                if (x < 0 || y < 0 || x >= w.outW || y >= w.outH) drawWaterTile(w, x, y, timeSec);
+    }
     for (int y = y0; y <= y1; y++)
         for (int x = x0; x <= x1; x++) {
             const Tile& t = w.at(x, y);
             float px = (float)x * TILE, py = (float)y * TILE;
             if (t.ground == G_VOID) { R::rect(px, py, TILE, TILE, Color(0.02f, 0.02f, 0.03f)); continue; }
+            if (t.ground == G_WATER) { drawWaterTile(w, x, y, timeSec); continue; }
+            if (t.ground == G_BRIDGE && (t.flags & TF_PLANKS)) { drawBridgeTile(w, x, y, timeSec); continue; }
             if (t.ground == G_CRYPT) {
                 if (t.solid == S_CRYPT_WALL) continue;   // the wall draws all of itself
                 if (const Assets::Sprite* s = cryptFloor(t.variant)) R::frame(s->frame(0), px, py, TILE, TILE);
@@ -472,6 +595,7 @@ void drawWorldTiles(World& w, Vec2 cam, float timeSec) {
                     else if (along % 2 == 1 && lf == along / 2) R::rect(px + 7, py + 3, 2, 10, paint);
                 }
             }
+            if (t.ground == G_BRIDGE) drawBridgeTile(w, x, y, timeSec);
             // Road paint, garbage, grass creeping over the paving (0.12v).
             if (t.overlay) {
                 Assets::TileRef ov = Art::overlayTile(t.overlay);
@@ -547,6 +671,40 @@ static bool isBarricade(const World& w, int x, int y) {
     if (!w.inBounds(x, y)) return false;
     int s = w.at(x, y).solid;
     return s == S_BARRICADE || s == S_GATE || s == S_GATE_OPEN;
+}
+
+// A roadblock on a closed bridge (0.13v): a line of striped concrete blocks across the
+// road, cones behind it, and a stop sign at the end.
+static void drawRoadblockTile(const World& w, int x, int y) {
+    auto rb = [&](int ox, int oy) { return w.inBounds(x + ox, y + oy) && w.at(x + ox, y + oy).solid == S_ROADBLOCK; };
+    // The line runs across the road: along whichever axis has more of it.
+    int along = 0, down = 0;
+    for (int k = -4; k <= 4; k++) { along += rb(k, 0) ? 1 : 0; down += rb(0, k) ? 1 : 0; }
+    bool horizontal = along >= down;
+    float px = (float)x * TILE, py = (float)y * TILE;
+    bool front = horizontal ? !rb(0, -1) : !rb(-1, 0);
+    if (!front) {
+        static const Assets::Sprite* cone = Assets::find("objects/traffic-cone");
+        bool end = horizontal ? !rb(1, 0) : !rb(0, 1);
+        Art::Piece sign = Art::object(horizontal ? Art::OB_STOP_DOWN : Art::OB_STOP_SIDE, 0, 0);
+        if (end && sign.valid()) sceneAdd(sign, Vec2(px + TILE * 0.5f, py + TILE));
+        else if (cone) sceneAdd(Art::Piece{cone, 0, false, 1.0f}, Vec2(px + TILE * 0.5f, py + TILE - 2), Color());
+        return;
+    }
+    Color body(0.70f, 0.70f, 0.68f), top(0.86f, 0.86f, 0.84f), red(0.80f, 0.16f, 0.14f), shade(0, 0, 0, 0.3f);
+    if (horizontal) {
+        R::rect(px, py + 13, TILE, 3, shade);
+        R::rect(px, py + 3, TILE, 10, body);
+        R::rect(px, py + 3, TILE, 3, top);
+        for (int i = 0; i < 16; i += 8) R::rect(px + i + ((x & 1) ? 4 : 0), py + 7, 4, 5, red);
+        R::rect(px + (rb(-1, 0) ? 0 : 0), py + 12, TILE, 1, Color(0.45f, 0.45f, 0.44f));
+    } else {
+        R::rect(px + 12, py, 3, TILE, shade);
+        R::rect(px + 3, py - 2, 9, TILE + 2, body);
+        R::rect(px + 3, py - 2, 9, 3, top);
+        for (int i = 0; i < 16; i += 8) R::rect(px + 4, py + 2 + i + ((y & 1) ? 4 : 0), 7, 3, red);
+        R::rect(px + 3, py + TILE - 1, 9, 1, Color(0.45f, 0.45f, 0.44f));
+    }
 }
 
 static void drawBarricadeTile(const World& w, int x, int y, const Tile& t, Color tint) {
@@ -725,7 +883,7 @@ void drawTileSolids(World& w, Vec2 cam, float timeSec) {
                 case S_BUNKER: hgt = 16; break;
                 case S_CRATE: case S_SANDBAG: hgt = 10; break;
                 case S_FENCE: case S_FENCE_GATE: hgt = 7; break;
-                case S_BARRICADE: case S_GATE: hgt = 12; break;
+                case S_BARRICADE: case S_GATE: case S_ROADBLOCK: hgt = 12; break;
                 default: break;
                 }
                 if (hgt > 0) R::shadowBox(px, py, px + TILE, py + TILE, hgt);
@@ -841,6 +999,9 @@ void drawTileSolids(World& w, Vec2 cam, float timeSec) {
             case S_FENCE_GATE:
             case S_FENCE_GATE_OPEN:
                 drawFenceGate(x, y, t, tint);
+                break;
+            case S_ROADBLOCK:
+                drawRoadblockTile(w, x, y);
                 break;
             default: {
                 // A fence runs on into its gates.
