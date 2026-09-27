@@ -40,6 +40,7 @@ const Glyph GLYPHS[COUNT] = {
     {-1, nullptr, "", "pad_lb", "LB", "ps_l1", "L1"},                                   // PagePrev
     {-1, nullptr, "", "pad_rb", "RB", "ps_r1", "R1"},                                   // PageNext
     {GLFW_KEY_ENTER, nullptr, nullptr, "pad_menu", "MENU", "ps_options", "OPTIONS"},    // Join (local co-op)
+    {GLFW_KEY_F, nullptr, nullptr, "pad_rs_click", "RS", "pad_rs_click", "R3"},         // Melee (tap; hold is the laser)
 };
 
 int g_forcePad = -1;   // the controls page shows a controller's buttons whatever is in use

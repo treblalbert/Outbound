@@ -14,10 +14,12 @@ enum ItemId : int {
     IT_REVOLVER, IT_CARBINE,
     // Elite guns: better versions of the ones above, never sold, only found.
     IT_M92, IT_LUGER, IT_MAGNUM, IT_MP5, IT_M15, IT_AK47, IT_M24,
+    // 0.12v
+    IT_BAT, IT_SOUP,
     IT_COUNT
 };
 
-enum class Cat { None, Valuable, Medical, Throwable, Ammo, Weapon, Armor, Backpack };
+enum class Cat { None, Valuable, Medical, Throwable, Ammo, Weapon, Armor, Backpack, Melee };   // Melee: 0.12v, its own slot
 
 struct ItemDef {
     const char* name;
@@ -79,6 +81,13 @@ float tierSpread(int tier);
 float tierReload(int tier);
 // A tier for a gun found in the world; quality 0..1 as for rollLoot (up to 2 in the catacombs).
 int rollWeaponTier(Rng& rng, float quality);
+// The day the loot is rolled for (0.12v): better tiers and the elite guns open up as
+// the days go by, so the first days are spent with plain guns wherever you look.
+// World::generate sets it; outside a raid it stays at the default (no limit).
+void setLootDay(int day);
+int lootDay();
+// 0 before day 4, rising to 1 by day 8: how often an elite gun turns up, relative to full.
+float eliteGate();
 
 const ItemDef& itemDef(int id);
 const WeaponDef* weaponDef(int id);

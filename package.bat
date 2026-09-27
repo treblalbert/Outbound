@@ -4,7 +4,7 @@ rem   dist\Outbound_0.11v.zip  ->  Outbound\Outbound.exe, the DLLs, assets\, cre
 rem Nobody's saves go in: the game makes its own saves\ folder next to the exe.
 setlocal
 cd /d "%~dp0"
-call "%~dp0build.bat"
+call "%~dp0build.bat" nopause
 if errorlevel 1 exit /b 1
 
 set NAME=Outbound_0.11v

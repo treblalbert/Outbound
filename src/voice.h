@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace Voice {
 
@@ -35,6 +36,12 @@ float sensitivity();    // 0..1, how easily open mic starts sending
 void setSensitivity(float s);
 std::string settingsText();
 void settingsFromText(const std::string& text);
+
+// ---- which microphone (0.12v)
+std::vector<std::string> micDevices();   // every input OpenAL sees, refreshed as they come and go
+std::string defaultMicName();            // the system's default input
+std::string micDevice();                 // the chosen one, "" = follow the system default
+void setMicDevice(const std::string& name);
 
 // ---- state for the HUD and the options
 bool micAvailable();

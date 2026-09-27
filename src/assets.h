@@ -19,6 +19,15 @@ namespace Assets {
 struct Frame {
     float u0 = 0, v0 = 0, u1 = 0, v1 = 0;
     int w = 0, h = 0;
+    // The pixels (px, py, pw, ph) of this frame, as a frame of their own.
+    Frame sub(float px, float py, float pw, float ph) const {
+        Frame o;
+        float du = (u1 - u0) / w, dv = (v1 - v0) / h;
+        o.u0 = u0 + du * px; o.u1 = u0 + du * (px + pw);
+        o.v0 = v0 + dv * py; o.v1 = v0 + dv * (py + ph);
+        o.w = (int)pw; o.h = (int)ph;
+        return o;
+    }
 };
 
 struct Sprite {

@@ -93,6 +93,14 @@ void addRaw(const std::string& relPath, const std::vector<uint8_t>& fileBytes) {
     parseSheet(key, frames);
     r.tileset = key.find("tileset") != std::string::npos;
     if (r.tileset) frames = 1;
+    // Some of the pack's sheets are misnamed (Character_side_death2/3 say Sheet6 but hold
+    // seven 21-pixel frames): a count that does not divide the width is taken as the
+    // nearest one that does, or the frames would be cut through the middle of the art.
+    if (frames > 1 && w % frames != 0)
+        for (int d = 1; d <= 2; d++) {
+            if (w % (frames + d) == 0) { frames += d; break; }
+            if (frames - d > 1 && w % (frames - d) == 0) { frames -= d; break; }
+        }
     r.frameCount = frames;
     r.key = key;
     // Raiders wear the player's art; give them a copy with the green shirt dyed red,
@@ -321,7 +329,15 @@ void addPlayStationFaces() {
     stbi_image_free(img);
 }
 
+// Free Bridges (free-game-assets): each bridge the game uses, whole, running north-south
+// (_v) and east-west (_h). The game repeats their middles to fit the span (game.cpp).
+const SliceDef BRIDGE_SLICES[] = {
+    {"grey_v", 16, 547, 34, 90}, {"grey_h", 90, 613, 98, 45},
+    {"wood_v", 225, 337, 30, 111}, {"wood_h", 292, 356, 105, 36},
+};
+
 void addPackSheets() {
+    addSlices("assets/Bridges/Bridges.png", "bridges/", BRIDGE_SLICES, sizeof(BRIDGE_SLICES) / sizeof(BRIDGE_SLICES[0]), false);
     addSlices("assets/Input tilemap.png", "input/", INPUT_SLICES, sizeof(INPUT_SLICES) / sizeof(INPUT_SLICES[0]), false);
     addPlayStationFaces();
     addSlices("assets/Furniture/doorswindowsstairs_LRK.png", "furniture/", FURN_DOORS, sizeof(FURN_DOORS) / sizeof(FURN_DOORS[0]), true);

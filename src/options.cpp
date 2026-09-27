@@ -23,7 +23,9 @@ float s_sfx = 1.0f;
 int s_aimAssist = 1;
 bool s_coopZoom = true;
 int s_ctrlPage = -1;               // controls: 0 keyboard, 1 controller (-1: whichever is in use)
-int s_ctrlPreview = -1;            // which controller's buttons the page shows (-1: the one plugged in)
+int s_ctrlPreview = -1;
+bool s_micList = false;            // the microphone list is open
+float s_listRect[4] = {0, 0, 0, 0}; // where it was drawn last frame            // which controller's buttons the page shows (-1: the one plugged in)
 GLFWwindow* s_window = nullptr;
 int s_winX = 100, s_winY = 100, s_winW = 1280, s_winH = 720;   // the window before going full screen
 
@@ -117,7 +119,14 @@ void setSfxVolume(float v) {
 }
 
 void drawPanel(float W, float H) {
-    float w = 300, h = 278, x = std::floor(W / 2 - w / 2), y = std::floor(H / 2 - h / 2);
+    float w = 300, h = 298, x = std::floor(W / 2 - w / 2), y = std::floor(H / 2 - h / 2);
+    // A click on the open microphone list belongs to it, not to what lies under it.
+    bool listClick = false;
+    if (s_micList && Input::mousePressed(0)) {
+        listClick = true;
+        Input::consumeMouse();
+    }
+    bool padPick = s_micList && Input::gamepad() && Input::pressed(GLFW_KEY_E);
     UI::panel(x, y, w, h, T("OPTIONS"));
     float ly = y + 22;
     Voice::setMeter(true);   // the microphone runs for the level meter while this is open
@@ -170,6 +179,12 @@ void drawPanel(float W, float H) {
     }
     ly += 22;
     R::text(T("F11: windowed / full screen"), x + 10, ly, pal(P_BEIGE));
+    {
+        // Local co-op: may the shared camera pull back to keep everyone in view?
+        bool z = s_coopZoom;
+        std::string zl = T("Co-op zoom");
+        if (UI::checkbox(x + w - 22 - R::textWidth(zl), ly, z, zl)) setCoopZoom(z);
+    }
 #else
     R::text(T("The browser decides the screen mode."), x + 10, ly, pal(P_BEIGE));
 #endif
@@ -181,7 +196,7 @@ void drawPanel(float W, float H) {
     {
         float bw = std::floor((w - 20 - 8) / 3);
         bool on = Voice::enabled();
-        if (UI::button(x + 10, ly, bw, 16, on ? T("On") : T("Off"), true, on ? P_YGREEN : P_CORAL)) { Voice::setEnabled(!on); save(); }
+        if (UI::checkbox(x + 12, ly + 5, on, on ? T("On") : T("Off"), on ? P_YGREEN : P_CORAL)) { Voice::setEnabled(on); save(); }
         std::string ptt = T("Push to talk") + " (" + Input::keyName(Input::binding(GLFW_KEY_V)) + ")";
         const std::string names[2] = {ptt, T("Open mic")};
         for (int i = 0; i < 2; i++) {
@@ -192,6 +207,21 @@ void drawPanel(float W, float H) {
         }
     }
     ly += 22;
+    // Which microphone (0.12v): the system's default unless you pick one. The list is
+    // asked afresh as it is shown, so plugging a headset in adds it straight away.
+    float devY = ly;
+    {
+        R::text(T("Input device"), x + 10, ly + 4, pal(P_LAVENDER));
+        std::string cur = Voice::micDevice();
+        bool present = cur.empty();
+        for (const std::string& n : Voice::micDevices()) present = present || n == cur;
+        std::string label = cur.empty() ? T1("Default ({0})", Voice::defaultMicName().empty() ? T("none") : Voice::defaultMicName()) : cur;
+        if (!present) label += " " + T("(unplugged)");
+        float bx = x + 80, bw = w - 90;
+        while (label.size() > 3 && R::textWidth(label) > bw - 16) label = label.substr(0, label.size() - 4) + "...";
+        if (UI::button(bx, ly, bw, 16, label + "  v", Voice::enabled())) s_micList = !s_micList;
+        ly += 20;
+    }
     auto voiceRow = [&](const char* name, float value, float maxV, void (*set)(float)) {
         R::text(T(name), x + 10, ly, pal(P_LAVENDER));
         char buf[16];
@@ -219,7 +249,35 @@ void drawPanel(float W, float H) {
     if (Voice::mode() == Voice::OPEN_MIC) voiceRow("Open mic sensitivity", Voice::sensitivity(), 1.0f, Voice::setSensitivity);
     else { R::text(T("You are only heard by players who can see you."), x + 10, ly, pal(P_BEIGE)); ly += 14; }
 
+    // The microphone list, over everything else while it is open.
+    if (s_micList && Voice::enabled()) {
+        std::vector<std::string> devs = Voice::micDevices();
+        std::vector<std::string> names = {""};
+        for (const std::string& n : devs) names.push_back(n);
+        float bx = x + 80, bw = w - 90, rowH = 15, lh = names.size() * rowH + 8;
+        float top = devY + 18;
+        UI::panel(bx, top, bw, lh, "");
+        for (size_t i = 0; i < names.size(); i++) {
+            std::string label = names[i].empty() ? T1("Default ({0})", Voice::defaultMicName().empty() ? T("none") : Voice::defaultMicName()) : names[i];
+            while (label.size() > 3 && R::textWidth(label) > bw - 14) label = label.substr(0, label.size() - 4) + "...";
+            float ry = top + 4 + i * rowH;
+            bool sel = names[i] == Voice::micDevice();
+            UI::focusable(bx + 3, ry, bw - 6, rowH - 1);
+            bool hov = UI::hover(bx + 3, ry, bw - 6, rowH - 1);
+            if (hov || sel) R::rect(bx + 3, ry, bw - 6, rowH - 1, pal(hov ? P_LAVENDER : P_PURPLE, hov ? 0.5f : 0.35f));
+            R::text(label, bx + 7, ry + 4, pal(sel ? P_YELLOW : P_WHITE));
+            if (hov && (listClick || padPick)) {
+                listClick = false;
+                Voice::setMicDevice(names[i]);
+                save();
+                s_micList = false;
+            }
+        }
+        // A click anywhere else closes it.
+        if (listClick && !UI::hover(bx, top, bw, lh)) s_micList = false;
+    }
     if (UI::button(x + w / 2 - 45, y + h - 24, 90, 16, T("Back"))) {
+        s_micList = false;
         Voice::setMeter(false);
         bool inGame = G.scene == Scene::Base || G.scene == Scene::Raid || G.scene == Scene::Defense;
         G.panel = inGame ? Panel::Pause : Panel::None;
@@ -238,7 +296,7 @@ static void drawPadControls(float x, float y, float w) {
         {Prompt::Move, "Move"}, {Prompt::Aim, "Aim (with aim assist)"}, {Prompt::Shoot, "Shoot"}, {Prompt::Sprint, "Sprint"},
         {Prompt::Interact, "Interact / search / get in"}, {Prompt::Choose, "Pick what to interact with"}, {Prompt::Reload, "Reload"},
         {Prompt::Heal, "Quick heal"}, {Prompt::Grenade, "Throw grenade"}, {Prompt::Swap, "Switch weapon"},
-        {Prompt::Laser, "Toggle laser"}, {Prompt::Inventory, "Inventory"}, {Prompt::Map, "Map"}, {Prompt::Pause, "Pause"},
+        {Prompt::Laser, "Hit (tap) / laser (hold)"}, {Prompt::Inventory, "Inventory"}, {Prompt::Map, "Map"}, {Prompt::Pause, "Pause"},
     };
     static const Row DRIVE[] = {{Prompt::Accelerate, "Accelerate"}, {Prompt::Brake, "Brake / reverse"}, {Prompt::Steer, "Steer"}, {Prompt::Handbrake, "Handbrake"}};
     static const Row MENU[] = {{Prompt::Select, "Select"}, {Prompt::AltSelect, "Other action (drop, equip)"}, {Prompt::Grab, "Pick up an item to move it"},
