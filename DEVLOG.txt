@@ -246,6 +246,15 @@ OUTBOUND - DEVLOG (0.11v)
 
 
 
+·BRIDGES
+
+- Bridges use the Free Bridges pack now. The highways cross the water on stone bridges: rails along both sides and, on the ones running east-west, the piers standing down into the water. Footpaths cross the rivers on wooden plank bridges with posts and rails.
+- Each bridge is built to fit its span: the ends once, the middle repeated for as long as the water is wide, so a long crossing is one long bridge.
+- A bridge starts and stops on one straight line instead of following the ragged coast lane by lane, and a crossing split by a thin spit of land is bridged straight over.
+- The water under and round them is still the game's own.
+
+
+
 ·SCRAPPING GUNS FOR PARTS
 
 - At the crafter, any gun you have (in hand, in your pockets or in your stash) can be scrapped for gun parts instead of sold for money. Press Scrap, then again to confirm.

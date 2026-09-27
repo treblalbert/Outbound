@@ -233,6 +233,9 @@ credits screen reads at runtime:
 * Post-apocalypse pixel art pack — The Lazy Stone
 * Survival Effects — Darkworld Audio
 * Anemoia (ambient music) — Rusted Studio
+* Free Bridges (top-down pixel art) — Free Game Assets (`assets/Bridges/Bridges.png`: the
+  stone road bridges and the wooden footbridges, cut in `src/assets.cpp` and stretched
+  to each span by repeating their middles in `src/game.cpp`)
 
 Everything under `assets/sprites/` is loaded automatically at startup:
 

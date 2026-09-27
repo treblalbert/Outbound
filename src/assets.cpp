@@ -329,7 +329,15 @@ void addPlayStationFaces() {
     stbi_image_free(img);
 }
 
+// Free Bridges (free-game-assets): each bridge the game uses, whole, running north-south
+// (_v) and east-west (_h). The game repeats their middles to fit the span (game.cpp).
+const SliceDef BRIDGE_SLICES[] = {
+    {"grey_v", 16, 547, 34, 90}, {"grey_h", 90, 613, 98, 45},
+    {"wood_v", 225, 337, 30, 111}, {"wood_h", 292, 356, 105, 36},
+};
+
 void addPackSheets() {
+    addSlices("assets/Bridges/Bridges.png", "bridges/", BRIDGE_SLICES, sizeof(BRIDGE_SLICES) / sizeof(BRIDGE_SLICES[0]), false);
     addSlices("assets/Input tilemap.png", "input/", INPUT_SLICES, sizeof(INPUT_SLICES) / sizeof(INPUT_SLICES[0]), false);
     addPlayStationFaces();
     addSlices("assets/Furniture/doorswindowsstairs_LRK.png", "furniture/", FURN_DOORS, sizeof(FURN_DOORS) / sizeof(FURN_DOORS[0]), true);

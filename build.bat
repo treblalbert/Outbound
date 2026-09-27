@@ -83,6 +83,8 @@ rem Copies exactly what the game reads at runtime:
 rem   assets\sprites\**\*.png   every sprite (the animated-preview Gif folders are skipped)
 rem   assets\MoreWeapons\*.png  the elite guns
 rem   assets\Furniture\*.png, assets\Input tilemap.png  interiors and button prompts
+rem   assets\Bridges\Bridges.png  the bridges over the water
+rem   assets\gamecontrollerdb.txt  the controller database
 rem   assets\Darkworld Audio - Survival Effects [Free .ogg]\**\*.ogg   every sound effect
 rem   assets\Music\*            the music playlist (mp3 / wav / ogg)
 rem   credits.txt               the credits screen
@@ -96,6 +98,9 @@ if errorlevel 8 exit /b 1
 robocopy assets\Furniture bin\assets\Furniture *.png /PURGE /NFL /NDL /NJH /NJS /NP >nul
 if errorlevel 8 exit /b 1
 copy /Y "assets\Input tilemap.png" bin\assets\ >nul
+if not exist bin\assets\Bridges mkdir bin\assets\Bridges
+copy /Y assets\Bridges\Bridges.png bin\assets\Bridges\ >nul
+copy /Y assets\gamecontrollerdb.txt bin\assets\ >nul
 robocopy "assets\Darkworld Audio - Survival Effects [Free .ogg]" "bin\assets\Darkworld Audio - Survival Effects [Free .ogg]" *.ogg /S /PURGE /NFL /NDL /NJH /NJS /NP >nul
 if errorlevel 8 exit /b 1
 if exist bin\assets\sounds rmdir /s /q bin\assets\sounds

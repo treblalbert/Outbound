@@ -421,6 +421,48 @@ static void drawWaterTile(const World& w, int x, int y, float time) {
         if (land(1, 1) && !land(1, 0) && !land(0, 1)) R::rect(px + TILE - 3, py + TILE - 3, 3, 3, foam);
     }
 }
+// ---- the bridge pack (0.13v, Free Bridges by free-game-assets) ---------------------
+// One axis of a piece laid over `dst` pixels: its `a` first and `c` last source pixels
+// once each, its middle repeated in between. Returns (source, size, offset) runs.
+struct Run { int src, len, at; };
+static std::vector<Run> runsAlong(int total, int a, int c, int dst) {
+    std::vector<Run> v;
+    if (dst <= a + c) {
+        int a2 = (int)std::floor(dst * (float)a / std::max(1, a + c));
+        v.push_back({0, a2, 0});
+        v.push_back({total - (dst - a2), dst - a2, a2});
+        return v;
+    }
+    v.push_back({0, a, 0});
+    int m = total - a - c;
+    for (int p = a; m > 0 && p < dst - c; p += m) v.push_back({a, std::min(m, dst - c - p), p});
+    v.push_back({total - c, c, dst - c});
+    return v;
+}
+static void drawRepeated(const Assets::Sprite* s, float X, float Y, int W, int H, int l, int r, int t, int b) {
+    if (!s || !s->valid()) return;
+    const Assets::Frame& f = s->frame(0);
+    for (const Run& cx : runsAlong(f.w, l, r, W))
+        for (const Run& cy : runsAlong(f.h, t, b, H))
+            if (cx.len > 0 && cy.len > 0)
+                R::frame(f.sub((float)cx.src, (float)cy.src, (float)cx.len, (float)cy.len), X + cx.at, Y + cy.at, (float)cx.len, (float)cy.len);
+}
+static void drawBridgeSpan(const BridgeSpan& b) {
+    static const Assets::Sprite *greyV = Assets::find("bridges/grey_v"), *greyH = Assets::find("bridges/grey_h"),
+                                *woodV = Assets::find("bridges/wood_v"), *woodH = Assets::find("bridges/wood_h");
+    float X = b.x0 * (float)TILE, Y = b.y0 * (float)TILE;
+    int W = b.w * TILE, H = b.h * TILE;
+    // Each piece is placed so its deck is the walkable tiles: rails on the edges, the
+    // far rail and the piers of an east-west bridge out over the water either side.
+    if (b.wood) {
+        if (b.eastWest) drawRepeated(woodH, X - 2, Y - 4, W + 4, H + 8, 3, 6, 13, 14);
+        else drawRepeated(woodV, X + (W - 30) * 0.5f, Y - 8, 30, H + 14, 15, 15, 34, 45);
+    } else {
+        if (b.eastWest) drawRepeated(greyH, X - 2, Y - 8, W + 4, H + 22, 15, 19, 11, 23);
+        else drawRepeated(greyV, X - 1, Y - 6, W + 2, H + 10, 9, 10, 20, 22);
+    }
+}
+
 // A bridge over the water: planks for a footbridge, the highway's asphalt otherwise,
 // with a rail along each side that has water beyond it.
 static void drawBridgeTile(const World& w, int x, int y, float time) {
@@ -551,7 +593,7 @@ void drawWorldTiles(World& w, Vec2 cam, float timeSec) {
             const Tile& t = w.at(x, y);
             float px = (float)x * TILE, py = (float)y * TILE;
             if (t.ground == G_VOID) { R::rect(px, py, TILE, TILE, Color(0.02f, 0.02f, 0.03f)); continue; }
-            if (t.ground == G_WATER) { drawWaterTile(w, x, y, timeSec); continue; }
+            if (t.ground == G_WATER || (t.ground == G_BRIDGE && (t.flags & TF_SPAN))) { drawWaterTile(w, x, y, timeSec); continue; }
             if (t.ground == G_BRIDGE && (t.flags & TF_PLANKS)) { drawBridgeTile(w, x, y, timeSec); continue; }
             if (t.ground == G_CRYPT) {
                 if (t.solid == S_CRYPT_WALL) continue;   // the wall draws all of itself
@@ -602,6 +644,9 @@ void drawWorldTiles(World& w, Vec2 cam, float timeSec) {
                 if (ov.valid()) R::tileAt(ov, px, py, TILE);
             }
         }
+    // The bridges over it (0.13v).
+    for (const BridgeSpan& b : w.bridges)
+        if (b.x0 <= x1 + 2 && b.y0 <= y1 + 2 && b.x0 + b.w >= x0 - 2 && b.y0 + b.h >= y0 - 2) drawBridgeSpan(b);
     // Flat scenery details (grass tufts, litter, flowers) sit on top of the ground,
     // and rugs on the floors of buildings.
     for (int y = y0; y <= y1; y++)

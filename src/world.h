@@ -68,6 +68,7 @@ enum TileFlag : uint8_t {
     TF_IRON = 2,               // 0.12v: an S_FENCE of wrought iron (Tiles/Iron-Fence) rather than wire
     TF_PLANKS = 4,             // 0.13v: a G_BRIDGE of wooden planks (a footbridge over a river)
     TF_TRAIL = 8,              // 0.13v: a forest trail (worn earth, kept clear of trees)
+    TF_SPAN = 16,              // 0.13v: part of a BridgeSpan (drawn with the bridge pack's art)
 };
 
 // ---- the bigger world (0.11v) ------------------------------------------------------
@@ -249,6 +250,10 @@ struct Dungeon {
     bool metro = false;                 // 0.13v: the metro under the suburb (day 15), with its brute
 };
 
+// A bridge (0.13v): a rectangle of G_BRIDGE drawn with the bridge pack's art, stone for
+// the roads and planks for the footbridges, running east-west or north-south.
+struct BridgeSpan { int x0, y0, w, h; bool wood, eastWest; };
+
 // Things that move but still stand in the way (the cars people drive, 0.11v): the raid
 // sets these so every collides()/move() respects them without knowing what they are.
 extern bool (*g_dynamicBlock)(float x, float y, float r);
@@ -291,6 +296,8 @@ struct World {
     // 0.13v: the radio tower's console, the survivors' medic and buyer, and today's
     // supply drop (0,0 when there is none).
     Vec2 radioPos, medicPos, buyerPos, dropPos;
+    std::vector<BridgeSpan> bridges;    // 0.13v, see BridgeSpan
+    void findBridges();
     // Where a point is: -1 outside, 0.. a catacomb, 100.. an upper floor (100 + index),
     // -2 nowhere (the rock between). Two things can only fight in the same place.
     int areaAt(Vec2 p) const { return areaAtTile(toTile(p.x), toTile(p.y)); }

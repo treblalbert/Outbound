@@ -2324,6 +2324,101 @@ static void generateBelow(World& W, uint64_t seed, int day, const std::vector<Fl
 
 
 
+// Every straight run of bridge becomes a BridgeSpan; one that is not a clean rectangle
+// (a winding road over a pond) keeps the plain drawn look.
+void World::findBridges() {
+    bridges.clear();
+    std::vector<uint8_t> seen((size_t)outW * outH, 0);
+    for (int y = 0; y < outH; y++)
+        for (int x = 0; x < outW; x++) {
+            if (seen[(size_t)y * outW + x] || at(x, y).ground != G_BRIDGE) continue;
+            std::vector<std::pair<int, int>> cells, stack{{x, y}};
+            seen[(size_t)y * outW + x] = 1;
+            int x0 = x, y0 = y, x1 = x, y1 = y;
+            bool planks = (at(x, y).flags & TF_PLANKS) != 0;
+            while (!stack.empty()) {
+                auto [cx, cy] = stack.back();
+                stack.pop_back();
+                cells.push_back({cx, cy});
+                x0 = std::min(x0, cx); x1 = std::max(x1, cx); y0 = std::min(y0, cy); y1 = std::max(y1, cy);
+                static const int DX[4] = {1, -1, 0, 0}, DY[4] = {0, 0, 1, -1};
+                for (int k = 0; k < 4; k++) {
+                    int nx = cx + DX[k], ny = cy + DY[k];
+                    if (nx < 0 || ny < 0 || nx >= outW || ny >= outH || seen[(size_t)ny * outW + nx]) continue;
+                    if (at(nx, ny).ground != G_BRIDGE || ((at(nx, ny).flags & TF_PLANKS) != 0) != planks) continue;
+                    seen[(size_t)ny * outW + nx] = 1;
+                    stack.push_back({nx, ny});
+                }
+            }
+            int bw = x1 - x0 + 1, bh = y1 - y0 + 1;
+            if (std::min(bw, bh) < 2) continue;
+            // The coast is ragged under the lanes: square the ends off, so the bridge
+            // starts and stops on one line (its ends rest on the bank).
+            if ((int)cells.size() != bw * bh) {
+                bool ok = (int)cells.size() * 4 >= bw * bh * 3;
+                for (int yy = y0; yy <= y1 && ok; yy++)
+                    for (int xx = x0; xx <= x1 && ok; xx++) {
+                        const Tile& t = at(xx, yy);
+                        if (t.ground == G_BRIDGE) continue;
+                        bool ground = t.ground == G_ROAD || t.ground == G_DIRT || t.ground == G_GRASS || t.ground == G_SAND ||
+                                      t.ground == G_WASTE || t.ground == G_WATER || t.ground == G_PAVEMENT;
+                        bool clear = t.solid == S_NONE || t.solid == S_TREE || t.solid == S_BUSH;
+                        if (!ground || !clear || t.container >= 0) ok = false;
+                    }
+                if (!ok) continue;
+                cells.clear();
+                for (int yy = y0; yy <= y1; yy++)
+                    for (int xx = x0; xx <= x1; xx++) {
+                        Tile& t = at(xx, yy);
+                        if (t.ground != G_BRIDGE) {
+                            t.ground = G_BRIDGE;
+                            t.solid = S_NONE; t.hp = 0; t.worldDeco = 0; t.overlay = 0; t.deco = 0;
+                            if (planks) t.flags |= TF_PLANKS;
+                        }
+                        seen[(size_t)yy * outW + xx] = 1;
+                        cells.push_back({xx, yy});
+                    }
+            }
+            BridgeSpan b{x0, y0, bw, bh, planks, bw > bh};
+            // Roads run the long way; a square one runs the way the water does not.
+            if (bw == bh) b.eastWest = !(at(x0 - 1, y0).ground == G_WATER || at(x1 + 1, y0).ground == G_WATER);
+            bridges.push_back(b);
+            for (auto [cx, cy] : cells) at(cx, cy).flags |= TF_SPAN;
+        }
+    // Two spans of the same bridge with a sliver of land between (a spit, an islet in the
+    // river) become one: bridged straight over rather than a stub of road between.
+    for (bool merged = true; merged;) {
+        merged = false;
+        for (size_t i = 0; i < bridges.size() && !merged; i++)
+            for (size_t j = 0; j < bridges.size() && !merged; j++) {
+                BridgeSpan &a = bridges[i], &c = bridges[j];
+                if (i == j || a.wood != c.wood || a.eastWest != c.eastWest) continue;
+                int gap;
+                if (a.eastWest) { if (a.y0 != c.y0 || a.h != c.h) continue; gap = c.x0 - (a.x0 + a.w); }
+                else { if (a.x0 != c.x0 || a.w != c.w) continue; gap = c.y0 - (a.y0 + a.h); }
+                if (gap < 1 || gap > 3) continue;
+                bool ok = true;
+                int gx0 = a.eastWest ? a.x0 + a.w : a.x0, gy0 = a.eastWest ? a.y0 : a.y0 + a.h;
+                int gw = a.eastWest ? gap : a.w, gh = a.eastWest ? a.h : gap;
+                for (int yy = gy0; yy < gy0 + gh && ok; yy++)
+                    for (int xx = gx0; xx < gx0 + gw && ok; xx++) {
+                        const Tile& t = at(xx, yy);
+                        if (t.container >= 0 || !(t.solid == S_NONE || t.solid == S_TREE || t.solid == S_BUSH)) ok = false;
+                    }
+                if (!ok) continue;
+                for (int yy = gy0; yy < gy0 + gh; yy++)
+                    for (int xx = gx0; xx < gx0 + gw; xx++) {
+                        Tile& t = at(xx, yy);
+                        t.ground = G_BRIDGE; t.solid = S_NONE; t.hp = 0; t.worldDeco = 0; t.overlay = 0; t.deco = 0;
+                        t.flags |= TF_SPAN | (a.wood ? TF_PLANKS : 0);
+                    }
+                if (a.eastWest) a.w = c.x0 + c.w - a.x0; else a.h = c.y0 + c.h - a.y0;
+                bridges.erase(bridges.begin() + (long)j);
+                merged = true;
+            }
+    }
+}
+
 void World::generate(uint64_t seedIn, int day) {
     seed = seedIn;
     this->day = day;
@@ -2347,6 +2442,7 @@ void World::generate(uint64_t seedIn, int day) {
     stairs.clear();
     patrols.clear();
     radioPos = medicPos = buyerPos = dropPos = Vec2();
+    bridges.clear();
     const Region& HOME = REGIONS[RG_HOME];
     homeTx = HOME.cx();
     homeTy = HOME.cy();
@@ -2810,6 +2906,7 @@ void World::generate(uint64_t seedIn, int day) {
         return !unlockedAt(tx, ty);
     }), spawns.end());
 
+    findBridges();
     // The sea is on every map (0.13v): the coasts show the shape of the island from the
     // start, the land itself is revealed as you go.
     for (int y = 0; y < outH; y++)
@@ -2840,6 +2937,7 @@ void World::generate(uint64_t seedIn, int day) {
         std::fprintf(stderr, "[world] radio %d,%d  camp %d,%d  drop %d,%d\n", toTile(radioPos.x), toTile(radioPos.y), toTile(medicPos.x), toTile(medicPos.y),
                      toTile(dropPos.x), toTile(dropPos.y));
         for (const Dungeon& d : dungeons) std::fprintf(stderr, "[world] %s door %d,%d\n", d.metro ? "metro" : "crypt", toTile(d.door.x), toTile(d.door.y));
+        for (const BridgeSpan& b : bridges) std::fprintf(stderr, "[world] bridge %s %s at %d,%d %dx%d\n", b.wood ? "wood" : "stone", b.eastWest ? "E-W" : "N-S", b.x0, b.y0, b.w, b.h);
     }
     std::fprintf(stderr, "[world] day %d: %dx%d, %zu cities, %zu floors, %zu spawns, %zu containers, %zu props\n", day, outW, outH,
                  cities.size(), floors.size(), spawns.size(), containers.size(), props.size());
@@ -2863,6 +2961,7 @@ void World::generateBase() {
     floors.clear();
     stairs.clear();
     patrols.clear();
+    bridges.clear();
     propAt.assign(tiles.size(), -1);
     for (int y = 0; y < h; y++)
         for (int x = 0; x < w; x++) {
