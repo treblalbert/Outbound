@@ -1225,6 +1225,7 @@ void useRadio() {
     takeFromSlots(p.inv, IT_WIRES, RADIO_WIRES, cap);
     takeFromSlots(p.inv, IT_BATTERY, RADIO_BATTERIES, cap);
     p.radioFixed = true;
+    if (Local::active()) Local::hostProfile().radioFixed = true;   // the save's, whoever mended it
     if (isGuest()) {
         Net::Writer w;
         w.u8(Coop::M_RADIO_FIX);

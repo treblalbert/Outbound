@@ -192,6 +192,60 @@ OUTBOUND - DEVLOG (0.11v)
 
 
 
+·THE ISLAND
+
+- The outside is one map from the first day: land in the middle of the sea, in regions divided by water and joined by highway bridges. Past the coast there is only open water, instead of the old wall of trees.
+- The home ground round the bunker is the map you already know: the village and the countryside, the same size as the first day's map always was. Two highways cross just outside the compound, one running west to east and one north to south.
+- The other regions are there from day 1: you can see them across the water. Their bridges are closed by roadblocks until their day comes. Walk up to one and you are told which day it opens. On the map, land that has not opened yet is shaded and marked with its day.
+- Day 5: the west woods and, beyond them, the city (now always to the west). Day 7: the north woods and the army base. Day 12: the radio hill to the east. Day 15: the ruined suburb to the south.
+- Rivers wind across the home ground, through both woods and down the radio hill. The highways cross them on bridges and footpaths cross on wooden footbridges. There are ponds in the low ground, muddy banks along the water, and small wooded islets out at sea.
+- Water is drawn by the game itself: deep blue out at sea, lighter in the shallows, with foam breathing along the shore and glints drifting over it. Bridges have rails and footbridges are planked. You cannot walk or drive into water.
+- The map shows the coasts from the start, so you can see the shape of the island, and is framed on the land you can reach.
+
+
+
+·THE WOODS
+
+- A long highway runs through thick woods between the village and the city, and another runs north to the army base. You can drive straight through, or leave the road.
+- Dirt trails wind off the highway into the trees, some of them forking, and lead to clearings: a cabin, a camp someone left in a hurry (bags and crates), a hunter's shed, or nothing at all.
+- The dead wander the woods, in the clearings and between the trees. Bags lie here and there.
+
+
+
+·DAY 7: THE ARMY BASE
+
+- A wire fence round the base, the north highway running in at its gate. Inside: four barracks, a two-floor HQ, an armoury, a paved parade ground and a helipad, a motor pool full of wrecks, and a supply depot of stacked crates and army boxes.
+- A sandbag tower at every corner with a sniper in it, squads about the place, and a patrol walking the inside of the fence. Army outposts stand out on the rest of the land.
+- The army's loot is the best outside the catacombs.
+
+
+
+·DAY 10: THE INFECTED
+
+- From day 10 some of the dead have turned into something worse, and more of them every day after.
+- Runners (pale green): small ones that sprint much faster than you can.
+- Spitters (yellow): they stop at a distance and spit acid, which splashes and hurts whoever is where it lands. Get close and they fight like the others.
+- Brutes (red, even bigger than the big ones): more than twice the health, hit harder, and tear through walls, doors, fences and crates in their way.
+- The infected come in hordes as well as out in the world.
+
+
+
+·DAY 12: THE RADIO HILL
+
+- A dead radio tower stands in a fenced yard on the east island, guarded. Mend it at its console with 2 Circuit Boards, 3 Copper Wires and a Battery.
+- Once it is mended, a supply drop comes down every day: an army crate full of good kit somewhere on the open land, away from the bunker. You are told at the start of the day, it is marked DROP on your map, and it trails red smoke. Whoever saw it come down is already on the way.
+- The survivors' camp, behind a ring of sandbags, has two people who will deal with you. Doc, the medic, patches you up (all your health back and the bleeding stopped) for $150. Marta, the buyer, takes gold watches, jewelry, graphics cards and intel drives and pays 30% more for them than the trader at home.
+- In co-op everyone can mend the tower; the host's save keeps it mended.
+
+
+
+·DAY 15: THE SUBURB AND THE METRO
+
+- The south island is a ruined suburb: streets of houses off the highway, most of them wrecked, gangs and the dead in the streets.
+- Somewhere among the houses is the way down into the metro: a second dungeon beside the day's catacomb, harder, with better loot, and a huge brute waiting at the end.
+
+
+
 ·FIXES
 
 - A stack of 9mm rounds over 60 (easy to reach in the stash) turned into the .338 icon. Big stacks used to swap to the pack's ammo crates, but the blue crate is already the .338 icon (and the red one the rocket's). Every kind of round keeps its own icon now.

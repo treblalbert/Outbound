@@ -117,6 +117,9 @@ static void loadCredits() {
 //   --at=X,Y             with --raid, start standing on that tile
 //   --barricades         with --raid or --defense, a ring of walls and gates round the bunker
 //   --local=N            with --raid, N local co-op players (extras on controller slots)
+//   --radio              with --raid, the radio tower is mended (a supply drop from day 12)
+//   --atradio, --atcamp, --atdrop   with --raid, start at the tower, the survivors' camp, the drop
+//   OUTBOUND_MAPDUMP=F   (environment) write the whole outside map to F as a PPM picture
 struct DevShot { std::string path; float at; bool done; };
 static std::vector<DevShot> g_devShots;
 // --record=FILE.mp4@START@SECONDS (trailer capture): the game steps at exactly 1/30 s a

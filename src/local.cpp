@@ -82,6 +82,7 @@ void syncWorld(int k) {
     p.barricades = h.barricades;
     p.tutorialDone = h.tutorialDone;
     p.mechanicMet = h.mechanicMet;
+    p.radioFixed = h.radioFixed;
     p.cryptDoneDay = h.cryptDoneDay;
     p.cryptDoneMask = h.cryptDoneMask;
     if (h.locatorDay == h.day) p.locatorDay = h.day;   // one locator shows everyone the way

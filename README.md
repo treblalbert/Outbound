@@ -141,6 +141,26 @@ head out again. Sleeping rolls a new world and clears it — and every day out i
 deadlier than the last, with tougher, more numerous enemies that hit harder, so a
 day you have already cleared is worth coming back to.
 
+## The island and the days ahead
+
+The outside is an island map (720×720 tiles) from day 1: regions of land in the
+sea, divided by rivers and straits and joined by highway bridges. The home ground
+round the bunker is open from the start; the rest can be seen across the water,
+and its bridges are closed by roadblocks until its day:
+
+| Day | Opens | What is there |
+|-----|-------|---------------|
+| 1 | Home ground | The village and countryside round the bunker. |
+| 3 | The catacombs | One a day, their door somewhere on the open land. |
+| 5 | West woods, the city | Trails through the woods to clearings, then the city. Cars from the mechanic. |
+| 7 | North woods, the army base | Barracks, HQ, armoury, depot, sniper towers, patrols. |
+| 10 | The infected | Runners, spitters (acid) and brutes (break walls). |
+| 12 | The radio hill (east) | Mend the tower for a daily supply drop; the survivors' medic and buyer. |
+| 15 | The suburb (south) | Ruined streets and the metro: a harder dungeon with a boss. |
+
+Water, bridges and roadblocks are drawn procedurally. The map shows the coasts
+from the start and marks each closed region with the day it opens.
+
 ## Hordes and the bunker's defenses
 
 Roughly every day and a half to two days, at any hour, a zombie horde spills
