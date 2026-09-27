@@ -1814,12 +1814,13 @@ static void panelCrafter(float W, float H) {
                 else {
                     // The parts go to your pockets, then your stash; if neither has room
                     // for them, the gun stays.
+                    // The gun goes first, so the copies worked on below do not have it.
+                    Item gun = it;
+                    it = Item();
                     std::vector<Item> inv = p.inv;
                     std::vector<StashRef> st = ownStashes();
                     std::vector<std::vector<Item>> stashes;
                     for (const StashRef& r : st) stashes.push_back(*r.v);
-                    Item gun = it;
-                    it = Item();
                     int left = addToSlots(inv, makeItem(IT_GUNPARTS, yield), p.invCapacity());
                     for (size_t k = 0; k < st.size() && left > 0; k++) left = addToSlots(stashes[k], makeItem(IT_GUNPARTS, left), st[k].slots);
                     if (left > 0) {
