@@ -961,6 +961,7 @@ const Entry TABLE[] = {
     {"Car", "Coche"},
     {"Poured a Fuel Can in: {0} L in the tank.", "Echaste un bidón: {0} L en el depósito."},
     {"The land has opened up: there are cities out past the fields now.", "El mundo se ha abierto: ahora hay ciudades más allá de los campos."},
+    {"Melted by a spitter's acid.", "Derretido por el ácido de un escupidor."},
     {"Road closed. The bridge opens on day {0}.", "Carretera cortada. El puente se abre el día {0}."},
     {"The west bridges are open: through the woods to the city. Take the car.", "Los puentes del oeste están abiertos: por el bosque hasta la ciudad. Coge el coche."},
     {"The north bridges are open: past the woods lies the army base.", "Los puentes del norte están abiertos: tras el bosque está la base militar."},

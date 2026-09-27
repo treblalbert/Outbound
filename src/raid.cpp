@@ -55,6 +55,17 @@ const ZombieKind ZOMBIE_KINDS[3] = {
     {220, 91, 13, 1.0f, 12, 12},    // axe
 };
 
+// The infected (0.13v): from day 10 some of the dead have turned into something worse.
+// A runner is a small one that sprints; a spitter keeps its distance and spits acid; a
+// brute is a big one grown huge, that breaks down walls in its way.
+ZombieKind zombieStats(int zkind, int infect) {
+    ZombieKind k = ZOMBIE_KINDS[zkind < 0 ? 0 : zkind > 2 ? 2 : zkind];
+    if (infect == 1) { k.speed *= 1.42f; k.hp *= 0.85f; k.bounty += 6; }
+    else if (infect == 2) { k.speed *= 0.9f; k.bounty += 10; }
+    else if (infect == 3) { k.hp *= 2.3f; k.damage *= 1.6f; k.speed *= 0.92f; k.reach += 3; k.bounty += 30; }
+    return k;
+}
+
 constexpr float PLAYER_R = 5;
 constexpr float ENEMY_R = 5;
 constexpr float ENEMY_DAMAGE_MUL = 0.42f;
@@ -146,6 +157,9 @@ struct ZombieCorpse { Vec2 pos; int kind; bool left; float t; int fall = 1; bool
 // An axe in flight, landing and lying where it fell (0.12v, the axe zombie's).
 struct FlyingAxe { Vec2 pos, vel; float flight, t = 0; int stage = 0, dir = 2; uint32_t owner; float dmg; };
 std::vector<FlyingAxe> s_axes;
+// A spitter's acid (0.13v): a glob that arcs to where its target stood and splashes.
+struct AcidGlob { Vec2 pos, vel; float flight, t = 0, dmg; bool splashed = false; };
+std::vector<AcidGlob> s_acid;
 std::vector<ZombieCorpse> s_zCorpses;
 void resolveHordeOffscreen();
 
@@ -700,7 +714,7 @@ void killEnemy(Enemy& e) {
     if (e.type == EnemyType::Zombie && e.roamer) {
         // One of the zone's dead (Zombies mode): a small bounty, and now and then
         // something it was still carrying.
-        const ZombieKind& zk = ZOMBIE_KINDS[std::clamp(e.zkind, 0, 2)];
+        const ZombieKind zk = zombieStats(e.zkind, e.infect);
         int bounty = (int)std::round(zk.bounty * 0.8f * (1.0f + 0.03f * (G.prof.day - 1)));
         if (mine) {
             G.prof.money += bounty;
@@ -738,7 +752,7 @@ void killEnemy(Enemy& e) {
     }
     if (e.type == EnemyType::Zombie) {
         Profile& p = G.prof;
-        const ZombieKind& zk = ZOMBIE_KINDS[std::clamp(e.zkind, 0, 2)];
+        const ZombieKind zk = zombieStats(e.zkind, e.infect);
         int bounty = (int)std::round(zk.bounty * (1.0f + 0.04f * (s_hordeN - 1)) * (1.0f + 0.15f * p.defUp[DU_BOUNTY]));
         p.hordeKills++;
         s_hordeKilled++;
@@ -2196,6 +2210,22 @@ void damageBase(float dmg) {
     if (p.baseHp <= 0) overrunBase();
 }
 
+// Which of the infected a new one of the dead is, if any: none before day 10, then
+// more of them every day.
+void infectZombie(Enemy& e) {
+    int day = G.prof.day;
+    if (day < INFECTED_DAY) return;
+    float more = std::min(1.0f, (day - INFECTED_DAY) * 0.08f);
+    float r = s_rng.f();
+    if (e.zkind == 1) { if (r < 0.35f + more * 0.3f) e.infect = 3; }
+    else if (e.zkind == 0) { if (r < 0.16f + more * 0.14f) e.infect = 1; else if (r < 0.26f + more * 0.2f) e.infect = 2; }
+    else if (r < 0.1f + more * 0.1f) e.infect = 2;
+    if (!e.infect) return;
+    ZombieKind k = zombieStats(e.zkind, e.infect);
+    e.hp = e.maxHp = e.maxHp * k.hp / ZOMBIE_KINDS[e.zkind].hp;
+    e.spitCd = s_rng.range(1, 3);
+}
+
 void spawnZombie(Vec2 pos, int kind) {
     const ZombieKind& zk = ZOMBIE_KINDS[kind];
     Enemy e;
@@ -2208,6 +2238,7 @@ void spawnZombie(Vec2 pos, int kind) {
     e.angle = angleOf(G.world.homePos - pos);
     e.retargetT = s_rng.range(0, 0.3f);
     e.netId = s_netIdNext++;
+    infectZombie(e);
     G.enemies.push_back(e);
 }
 
@@ -2222,14 +2253,17 @@ bool zombieChop(Enemy& e, Vec2 dir, float dmg, float attackCd) {
         int x = tx + (k == 1 ? (dir.x > 0 ? 1 : -1) : 0), y = ty + (k == 2 ? (dir.y > 0 ? 1 : -1) : 0);
         if (!G.world.inBounds(x, y)) continue;
         const Tile& t = G.world.at(x, y);
-        if (t.solid != S_TREE && t.solid != S_BUSH) continue;
+        bool breakable = t.solid == S_TREE || t.solid == S_BUSH;
+        // A brute (0.13v) goes through walls, doors, fences and crates the same way.
+        if (e.infect == 3 && t.solid != S_NONE && t.hp > 0 && solidInfo(t.solid).hp > 0) breakable = true;
+        if (!breakable) continue;
         Vec2 c = World::tileCenter(x, y);
         if (dist(e.pos, c) > 18) continue;
         e.angle = angleOf(c - e.pos);
         if (e.meleeCd <= 0) {
             e.meleeCd = attackCd;
             int col = solidInfo(t.solid).mapColor;
-            if (G.world.damageTile(x, y, dmg * 2.0f)) {
+            if (G.world.damageTile(x, y, dmg * (e.infect == 3 ? 4.0f : 2.0f))) {
                 addParticles(c, 10, col, 20, 70, 0.3f, 0.8f, false, 2);
                 sfxAt(Snd::tile_break, c, G.player.pos, 0.6f, s_rng.range(0.8f, 1.0f));
             } else {
@@ -2263,6 +2297,7 @@ void spawnRoamer(Vec2 pos, int kind) {
     e.wanderT = s_rng.range(0, 4);
     e.retargetT = s_rng.range(0, 0.3f);
     e.netId = s_netIdNext++;
+    infectZombie(e);
     G.enemies.push_back(e);
 }
 
@@ -2291,12 +2326,14 @@ float nearestTargetDist(Vec2 p) {
     return best;
 }
 
+bool spitterAct(Enemy& e, float dt, float dmg);
+
 // They shamble around where they were left, in their packs, until something catches
 // their eye (sight, or anyone right up close) or a gunshot draws them over. Then
 // the whole pack comes.
 void updateRoamer(size_t index, float dt) {
     Enemy& e = G.enemies[index];
-    const ZombieKind& zk = ZOMBIE_KINDS[std::clamp(e.zkind, 0, 2)];
+    const ZombieKind zk = zombieStats(e.zkind, e.infect);
     float near = nearestTargetDist(e.pos);
     if (near > 720 && e.state == AIState::Idle) return;    // nobody about: they stand
     float dmg = zk.damage * dayThreat() * 0.8f;
@@ -2332,6 +2369,7 @@ void updateRoamer(size_t index, float dt) {
     if (e.state == AIState::Combat && (tt || ht)) {
         goal = tt ? tt->pos : ht->pos;
         e.lastSeen = goal;
+        if (spitterAct(e, dt, dmg)) return;
         if (dist(e.pos, goal) <= zk.reach) {
             e.angle = angleOf(goal - e.pos);
             if (e.meleeCd <= 0) {
@@ -2501,7 +2539,7 @@ void updateHordeSpawning(float dt) {
 // people, a turret in their path - gets torn into first.
 void updateZombie(size_t index, float dt) {
     Enemy& e = G.enemies[index];
-    const ZombieKind& zk = ZOMBIE_KINDS[std::clamp(e.zkind, 0, 2)];
+    const ZombieKind zk = zombieStats(e.zkind, e.infect);
     Player& pl = G.player;
     Profile& p = G.prof;
     float dmg = zk.damage * (1.0f + 0.05f * (s_hordeN - 1));
@@ -2530,6 +2568,8 @@ void updateZombie(size_t index, float dt) {
         }
         return;
     }
+
+    if (spitterAct(e, dt, dmg * dayThreat())) return;
 
     // ---- the axe zombie (0.12v): throws its axe at someone it can see a little way
     // off, then goes and takes it back up if it lies close enough; bare-handed it hits
@@ -4275,6 +4315,7 @@ static void beginRaid(bool resume) {
     placeTurretsInWorld(G.world);
     s_gateT.clear();
     s_axes.clear();
+    s_acid.clear();
     s_casings.clear();
     G.enemies.clear();
     G.bullets.clear();
@@ -4478,6 +4519,55 @@ namespace {
 // guest only mirrors it.
 // Thrown axes (0.12v): fly to where their target stood, hurt whoever is there, stick
 // in the ground (or a wall) and lie there until taken back up or the day moves on.
+void updateAcid(float dt) {
+    for (size_t i = 0; i < s_acid.size();) {
+        AcidGlob& a = s_acid[i];
+        a.t += dt;
+        if (!a.splashed) {
+            Vec2 next = a.pos + a.vel * dt;
+            bool wall = G.world.blocksBullet(World::toTile(next.x), World::toTile(next.y));
+            if (!wall) a.pos = next;
+            if (wall || a.t >= a.flight) {
+                a.splashed = true;
+                a.t = 0;
+                for (const Target& t : s_targets)
+                    if (dist(t.pos, a.pos) < 13) hurtSlot(t.slot, a.dmg, "Melted by a spitter's acid.");
+                for (Hireling* h : s_mercs)
+                    if (!h->dead && dist(h->pos, a.pos) < 13) damageHireling(*h, a.dmg);
+                addParticles(a.pos, 12, P_LGREEN, 20, 70, 0.3f, 0.7f, true, 2);
+                sfxAt(Snd::tile_hit, a.pos, G.player.pos, 0.4f, 1.4f);
+            }
+        } else if (a.t > 4.0f) {
+            s_acid.erase(s_acid.begin() + i);
+            continue;
+        }
+        i++;
+    }
+}
+// A spitter with someone in sight at range stands off and spits. True while it does.
+bool spitterAct(Enemy& e, float dt, float dmg) {
+    if (e.infect != 2) return false;
+    e.spitCd -= dt;
+    for (const Target& t : s_targets) {
+        float d = dist(e.pos, t.pos);
+        if (d < 44 || d > 150 || !sameArea(e.pos, t.pos) || !G.world.lineOfSight(e.pos, t.pos)) continue;
+        e.angle = angleOf(t.pos - e.pos);
+        if (e.spitCd <= 0) {
+            e.spitCd = s_rng.range(2.2f, 3.2f);
+            e.meleeCd = 0.5f;
+            AcidGlob a;
+            a.pos = e.pos + Vec2(0, -4);
+            a.vel = normalize(t.pos - a.pos) * 150.0f;
+            a.flight = d / 150.0f;
+            a.dmg = dmg * 1.1f;
+            s_acid.push_back(a);
+            sfxAt(Snd::toss, e.pos, G.player.pos, 0.5f, 1.5f);
+        }
+        return d < 110;   // near enough: hold here; further, keep closing in
+    }
+    return false;
+}
+
 void updateAxes(float dt) {
     for (size_t i = 0; i < s_axes.size();) {
         FlyingAxe& a = s_axes[i];
@@ -4531,6 +4621,7 @@ void worldSim(float dt) {
     updateGates(dt);
     othersSplash();
     updateAxes(dt);
+    updateAcid(dt);
     updateSquad(dt);
     buryHirelings();
     // Nobody stands inside a car that drove into them.
@@ -5589,7 +5680,13 @@ void drawZombie(const Enemy& e, float animTime) {
     if (e.takeT >= 0) { anim = Art::Anim::PickUp; frame = (int)((0.8f - e.takeT) * 10.0f); }
     Art::Piece z = Art::zombie(kind, dir, anim, frame, alt, e.noAxe);
     Vec2 base = e.pos + Vec2(0, 8);
-    if (z.valid()) sceneAdd(z, base, tint, kind == 1 ? 1.15f : 1.0f);
+    // The infected (0.13v) are sicklier: runners pale green, spitters yellow, brutes raw
+    // red and bigger still.
+    static const Color INFECT[4] = {Color(), Color(0.72f, 1.0f, 0.7f), Color(1.0f, 1.0f, 0.5f), Color(1.0f, 0.62f, 0.58f)};
+    Color it = INFECT[e.infect & 3];
+    tint = Color(tint.r * it.r, tint.g * it.g, tint.b * it.b, tint.a);
+    float scale = kind == 1 ? (e.infect == 3 ? 1.4f : 1.15f) : 1.0f;
+    if (z.valid()) sceneAdd(z, base, tint, scale);
     else sceneAddSprite(SHADE, e.pos, tint);
 }
 
@@ -6820,6 +6917,18 @@ void raid_draw() {
         R::spriteAt(*body.sprite, body.frame, c.pos + Vec2(0, 7), R::Pivot::Bottom, 1, Color(1, 1, 1, a), body.flipX);
     }
     drawCasings();
+    for (const AcidGlob& a : s_acid) {
+        if (!a.splashed) {
+            float h = std::sin(clampf(a.t / std::max(0.05f, a.flight), 0, 1) * PI) * 12.0f;
+            R::rect(std::floor(a.pos.x) - 2, std::floor(a.pos.y - h) - 2, 4, 4, Color(0.55f, 0.95f, 0.3f));
+            R::rect(std::floor(a.pos.x) - 1, std::floor(a.pos.y - h) - 1, 2, 2, Color(0.85f, 1.0f, 0.6f));
+        } else {
+            // The puddle it leaves, fading.
+            float al = clampf(1.0f - a.t / 4.0f, 0, 1) * 0.6f;
+            R::rect(std::floor(a.pos.x) - 5, std::floor(a.pos.y) - 2, 10, 4, Color(0.45f, 0.8f, 0.2f, al));
+            R::rect(std::floor(a.pos.x) - 3, std::floor(a.pos.y) - 3, 6, 6, Color(0.45f, 0.8f, 0.2f, al));
+        }
+    }
     for (const FlyingAxe& a : s_axes) {
         if (a.stage == 0) {
             // Spinning through the air, in an arc.
@@ -7494,7 +7603,7 @@ void sendSnapshot(int slot) {
         if (lengthSq(e.pos - at) > NET_RANGE * NET_RANGE && (e.type != EnemyType::Zombie || e.roamer)) continue;
         m.u32(e.netId);
         m.u8((uint8_t)e.type);
-        m.u8(e.type == EnemyType::Zombie ? (uint8_t)(e.zkind | (e.roamer ? 0x80 : 0) | (e.noAxe ? 0x40 : 0) | (e.takeT >= 0 ? 0x20 : 0)) : e.artVariant);
+        m.u8(e.type == EnemyType::Zombie ? (uint8_t)(e.zkind | ((e.infect & 3) << 2) | (e.roamer ? 0x80 : 0) | (e.noAxe ? 0x40 : 0) | (e.takeT >= 0 ? 0x20 : 0)) : e.artVariant);
         uint8_t f = (e.hurtT > 0 ? 1 : 0) | (e.flashT > 0 ? 2 : 0) | (e.reloadT > 0 ? 4 : 0) |
                     (e.state == AIState::Alert ? 8 : 0) | (e.meleeCd > 0.35f ? 16 : 0);
         m.u8(f);
@@ -7555,6 +7664,7 @@ void readSnapshot(Net::Reader& r) {
         if (type == EnemyType::Zombie) {
             e.zkind = variant & 3; e.artVariant = (uint8_t)(variant & 3); e.roamer = (variant & 0x80) != 0;
             e.noAxe = (variant & 0x40) != 0;
+            e.infect = (uint8_t)((variant >> 2) & 3);
             if ((variant & 0x20) && e.takeT < 0) e.takeT = 0.8f;
             if (!(variant & 0x20)) e.takeT = -1;
         }
@@ -7812,6 +7922,7 @@ std::string raid_coopOffscreenHorde() {
         placeTurretsInWorld(G.world);
     s_gateT.clear();
     s_axes.clear();
+    s_acid.clear();
     s_casings.clear();
         G.enemies.clear();
         G.bullets.clear();
@@ -8299,6 +8410,7 @@ std::string raid_missedHorde() {
     placeTurretsInWorld(G.world);
     s_gateT.clear();
     s_axes.clear();
+    s_acid.clear();
     s_casings.clear();
     G.enemies.clear();
     G.bullets.clear();

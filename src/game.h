@@ -418,6 +418,9 @@ struct Enemy {
     int patrol = -1;           // a city gang on patrol (World::patrols), -1 none
     // 0.12v: the axe zombie throws its axe, fights bare-handed, and takes it back up.
     bool noAxe = false;
+    // 0.13v: the infected, from day 10: 1 a runner, 2 a spitter, 3 a brute (0 none).
+    uint8_t infect = 0;
+    float spitCd = 0;
     float axeCd = 3, takeT = -1;
 };
 
