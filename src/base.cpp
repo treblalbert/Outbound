@@ -1725,6 +1725,23 @@ int drumCost(const Item& it) { return std::max(1100, (int)(craftBase(it) * 1.0f)
 // A launcher's single round has nowhere to go.
 bool magUpgradable(const Item& it) { const WeaponDef* w = weaponDef(it.id); return w && !w->explosive && w->magSize >= 4; }
 
+// Scrapping a gun (0.13v): no money, only its parts back, for upgrading the guns you
+// keep. A better tier, a dearer gun and a fitted drum all give more.
+int scrapParts(const Item& it) {
+    int n;
+    switch (itemTier(it)) {
+    case TIER_COMMON: n = 1; break;
+    case TIER_UNCOMMON: n = 2; break;
+    case TIER_RARE: n = 4; break;
+    case TIER_EPIC: n = 6; break;
+    default: n = 9; break;   // legendary: the elite guns
+    }
+    if (craftBase(it) >= 1500) n++;
+    if (it.flags & ITEMF_MAG_DRUM) n++;
+    return n;
+}
+int s_scrapArm = -1;        // the gun (list index) whose Scrap button has been pressed once
+
 int partsHave() { return missionHave(IT_GUNPARTS); }
 void takeParts(int n) {
     Profile& p = G.prof;
@@ -1778,13 +1795,53 @@ static void panelCrafter(float W, float H) {
 
     // ---- right: what can be done to the one picked
     float rx = x + 184, rw = w - 190, ry = y + 18;
-    R::text(T("Gun parts are found out in the world."), rx, y + h - 38, pal(P_LAVENDER));
+    R::text(T("Gun parts: found out in the world, or scrapped from guns."), rx, y + h - 38, pal(P_LAVENDER));
     if (!guns.empty()) {
         Item& it = *guns[s_craftSel].it;
         const WeaponDef* wd = weaponDef(it.id);
         UI::itemIcon(it.id, rx, ry, 24);
         R::text(itemLabel(it), rx + 28, ry + 2, tierColor(itemTier(it)));
         R::text(T(tierName(itemTier(it))) + "   " + T("MAG") + " " + std::to_string(magSizeOf(it)), rx + 28, ry + 13, pal(P_BEIGE));
+        // Scrap it for its parts: pressed once to arm, again to do it.
+        {
+            int yield = scrapParts(it);
+            if (s_scrapArm != s_craftSel) s_scrapArm = -1;
+            bool armed = s_scrapArm == s_craftSel;
+            std::string lbl = armed ? T("Sure? Scrap it") : T1("Scrap: +{0} parts", std::to_string(yield));
+            float bw = std::floor(R::textWidth(lbl)) + 12;
+            if (UI::button(rx + rw - bw - 2, ry + 4, bw, 14, lbl, true, armed ? P_CORAL : P_ORANGE)) {
+                if (!armed) s_scrapArm = s_craftSel;
+                else {
+                    // The parts go to your pockets, then your stash; if neither has room
+                    // for them, the gun stays.
+                    std::vector<Item> inv = p.inv;
+                    std::vector<StashRef> st = ownStashes();
+                    std::vector<std::vector<Item>> stashes;
+                    for (const StashRef& r : st) stashes.push_back(*r.v);
+                    Item gun = it;
+                    it = Item();
+                    int left = addToSlots(inv, makeItem(IT_GUNPARTS, yield), p.invCapacity());
+                    for (size_t k = 0; k < st.size() && left > 0; k++) left = addToSlots(stashes[k], makeItem(IT_GUNPARTS, left), st[k].slots);
+                    if (left > 0) {
+                        it = gun;
+                        setNotice(T("No room for the parts in your pockets or stash."));
+                    } else {
+                        // Whatever was in its magazine comes back as loose rounds, if it fits.
+                        if (const WeaponDef* gw = weaponDef(gun.id); gw && gun.data > 0) addToSlots(inv, makeItem(gw->ammo, gun.data), p.invCapacity());
+                        p.inv = inv;
+                        for (size_t k = 0; k < st.size(); k++) *st[k].v = stashes[k];
+                        setNotice(T2("Scrapped the {0} for {1} gun parts.", T(itemDef(gun.id).name), std::to_string(yield)));
+                        Audio::play(Snd::tile_break, 0.6f, 1.2f);
+                        Audio::play(Snd::reload_end, 0.7f, 0.7f);
+                        save_game();
+                    }
+                    s_scrapArm = -1;
+                }
+            }
+            if (UI::hover(rx + rw - bw - 2, ry + 4, bw, 14))
+                UI::tooltip(T("Scrap for parts"), T("Break the gun down for gun parts (no money) to upgrade the guns you keep."));
+        }
+        if (guns[s_craftSel].it->empty()) { if (UI::button(x + w / 2 - 40, by, 80, 16, T("Close")) || UI::panelClose()) G.panel = Panel::None; return; }
         ry += 30;
         auto row = [&](const std::string& name, const std::string& desc, const std::string& state, CraftCost c, bool possible, int color, int toTier = -1) {
             R::rect(rx, ry, rw, state.empty() ? 46 : 26, pal(P_PURPLE, 0.25f));

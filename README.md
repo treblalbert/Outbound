@@ -111,6 +111,8 @@ The **crafter** in the bunker works on one gun at a time: a tier up (money and g
 parts, up to epic), a **laser pointer**, an extended and then a drum magazine. A fitted
 laser has its own on/off switch: **L** toggles it on the gun in your hands. Better tiers throw a longer beam, and
 the beam stops on walls, doors, trees and cars like the flashlight does.
+A gun you do not want can also be **scrapped** there for gun parts instead of sold for
+money: 1 for a common gun up to 9 for an elite, more for dear guns and fitted drums.
 
 Getting shot can make you **bleed** (7% per bullet, half as likely with armour on). It
 drains health slowly for about a minute unless you use a bandage or medkit, and it never

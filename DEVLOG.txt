@@ -246,6 +246,14 @@ OUTBOUND - DEVLOG (0.11v)
 
 
 
+·SCRAPPING GUNS FOR PARTS
+
+- At the crafter, any gun you have (in hand, in your pockets or in your stash) can be scrapped for gun parts instead of sold for money. Press Scrap, then again to confirm.
+- It gives 1 part for a common gun, 2 uncommon, 4 rare, 6 epic and 9 for an elite, one more for a dear gun (worth $1,500 or more new) and one more if it has a drum magazine. Rounds left in its magazine come back as loose ammo.
+- The parts go to your pockets, or your stash if your pockets are full, ready for the crafter's upgrades on the guns you keep.
+
+
+
 ·FIXES (DEATHS, STAMINA, MENU)
 
 - A raider falling on their side sometimes had the top of their head at the wrong end of the body, by the feet. The pack names two of its side-on death animations as six frames when they hold seven, so each frame was cut through the middle of the art. A sheet whose frame count does not divide its width is now cut at the right count.
