@@ -1,4 +1,7 @@
 sfx 1
+ambient 0.7
 display 2
+aimassist 1
+coopzoom 1
 binds 
-voice 0 0 1 1 0.5
+voice 0 0 0.997143 1 0.5 |OpenAL Soft on Capture Input terminal (USB Microphone)
