@@ -665,8 +665,11 @@ void menu_update(float dt) {
     s_menuClock = std::fmod(s_menuClock + dt * 10.0f, 24 * 60.0f);
     Audio::setAmbient(Audio::AMB_BIRDS, 0.35f);   // the title screen's quiet morning (0.11v)
     G.cam += Vec2(9, 4) * dt;
-    float maxX = G.menuWorld.w * TILE - R::width() - 64.0f, maxY = G.menuWorld.h * TILE - R::height() - 64.0f;
-    if (G.cam.x > maxX || G.cam.y > maxY) G.cam = Vec2(64, 64);
+    // It drifts over the home island (0.13v: the rest of the map is mostly sea).
+    const Region& home = REGIONS[RG_HOME];
+    float minX = (home.x0 + 16) * (float)TILE, minY = (home.y0 + 16) * (float)TILE;
+    float maxX = (home.x0 + home.w - 16) * (float)TILE - R::width(), maxY = (home.y0 + home.h - 16) * (float)TILE - R::height();
+    if (G.cam.x > maxX || G.cam.y > maxY || G.cam.x < minX - 4 || G.cam.y < minY - 4) G.cam = Vec2(minX, minY);
     if (G.scene == Scene::LocalLobby) {
         // The lobby reads every device itself: a controller's B leaves its place rather
         // than backing out of the screen, so only the keyboard's Escape does that.
@@ -721,19 +724,20 @@ void menu_draw() {
             int last = last_slot();
             if (UI::menuButton(rx, by, cw, bh, "load", T("Continue"), last >= 0) && last >= 0) s_loadSlot = last;   // next frame
             if (last >= 0 && UI::hover(rx, by, cw, bh)) UI::tooltip(T("Continue"), T1("Slot {0}", std::to_string(last + 1)));
-            if (UI::button(bx, by + 25, cw, bh, T("Local co-op"))) { Local::lobbyOpen(); G.scene = Scene::LocalLobby; }
-            if (UI::button(rx, by + 25, cw, bh, T("Online co-op"))) { Net::ensureSteam(); G.scene = Scene::Lobby; }
-            if (UI::button(bx, by + 50, cw, bh, T("How to play"))) { s_introThenPlay = false; G.scene = Scene::Intro; }
-            if (UI::button(rx, by + 50, cw, bh, T("Controls"))) G.scene = Scene::Controls;
-            if (UI::menuButton(bx, by + 75, cw, bh, "settings", T("Options"))) G.panel = Panel::Options;
-            if (UI::button(rx, by + 75, cw, bh, T("Credits"))) { G.scene = Scene::Credits; s_creditsScroll = 0; }
-            if (UI::menuButton(std::floor(W / 2 - cw / 2), by + 100, cw, bh, "quit", T("Exit"))) G.quit = true;
+            // Local co-op is not offered yet (0.13v): the rest close up into a full grid.
+            // It is still there for testing (--local=N, --screen=local).
+            if (UI::button(bx, by + 25, cw, bh, T("Online co-op"))) { Net::ensureSteam(); G.scene = Scene::Lobby; }
+            if (UI::button(rx, by + 25, cw, bh, T("How to play"))) { s_introThenPlay = false; G.scene = Scene::Intro; }
+            if (UI::button(bx, by + 50, cw, bh, T("Controls"))) G.scene = Scene::Controls;
+            if (UI::menuButton(rx, by + 50, cw, bh, "settings", T("Options"))) G.panel = Panel::Options;
+            if (UI::button(bx, by + 75, cw, bh, T("Credits"))) { G.scene = Scene::Credits; s_creditsScroll = 0; }
+            if (UI::menuButton(rx, by + 75, cw, bh, "quit", T("Exit"))) G.quit = true;
             bx = std::floor(W / 2 - bw / 2);
             by -= 2;
             {
                 std::string label = T("Check my other game: IncreMiner");
                 float iw = std::floor(R::textWidth(label)) + 20;
-                float ix = std::floor(W / 2 - iw / 2), iy = by + 150;
+                float ix = std::floor(W / 2 - iw / 2), iy = by + 125;
                 if (UI::button(ix, iy, iw, bh, label, true, P_YELLOW)) openUrl("https://store.steampowered.com/app/5071340/INCREMINER/");
                 if (UI::hover(ix, iy, iw, bh)) UI::tooltip("IncreMiner", T("Opens its Steam store page in your browser."));
             }

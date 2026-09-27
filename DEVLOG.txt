@@ -246,6 +246,15 @@ OUTBOUND - DEVLOG (0.11v)
 
 
 
+·FIXES (DEATHS, STAMINA, MENU)
+
+- A raider falling on their side sometimes had the top of their head at the wrong end of the body, by the feet. The pack names two of its side-on death animations as six frames when they hold seven, so each frame was cut through the middle of the art. A sheet whose frame count does not divide its width is now cut at the right count.
+- Stamina is a thin pale-blue bar with a lightning bolt beside it (red while you are out of breath), so it cannot be taken for a food meter. There is no hunger in the game.
+- Local co-op is off the main menu for now; the other buttons close up into a full grid.
+- The title screen drifts over the home island rather than the open sea.
+
+
+
 ·FIXES
 
 - A stack of 9mm rounds over 60 (easy to reach in the stash) turned into the .338 icon. Big stacks used to swap to the pack's ammo crates, but the blue crate is already the .338 icon (and the red one the rocket's). Every kind of round keeps its own icon now.

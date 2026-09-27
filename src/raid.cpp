@@ -5917,6 +5917,18 @@ static const char* fullnessIcon(bool small, float frac) {
     return H[small][k];
 }
 
+// Stamina (0.13v): a lightning bolt and a thin pale-blue bar, so it reads as energy,
+// nothing like the pack's heart or its food meter.
+static void drawStamina(float x, float y, float w, float frac, bool exhausted) {
+    static const char* BOLT[7] = {"...##", "..##.", ".####", "####.", "..##.", ".##..", ".#..."};
+    Color bolt = exhausted ? pal(P_CORAL) : Color(0.75f, 0.92f, 1.0f);
+    for (int r = 0; r < 7; r++)
+        for (int c = 0; c < 5; c++)
+            if (BOLT[r][c] == '#') R::rect(x - 10 + c, y - 2 + r, 1, 1, bolt);
+    R::rect(x - 1, y, w + 2, 4, pal(P_DARK, 0.85f));
+    R::rect(x, y + 1, std::floor(w * clampf(frac, 0, 1)), 2, exhausted ? pal(P_CORAL) : Color(0.55f, 0.82f, 0.98f));
+}
+
 // A row of `n` small hearts for a health fraction, each whole, half or empty.
 static void drawHearts(float x, float y, float frac, int n, bool small = true) {
     for (int i = 0; i < n; i++) {
@@ -6098,8 +6110,8 @@ static void drawSeatCard(int k, float x, float y, float w) {
         UI::bar(hx, hy + 3, 52, 4, hpFrac, P_CORAL);
     else hudArt(fullnessIcon(true, hpFrac), hx, hy);
     R::text(std::to_string((int)std::ceil(p.hp)), hx + 56, hy + 2, pal(P_CORAL));
-    UI::bar(hx + 11, hy + 11, 40, 2, pl.stamina / p.maxStamina(), P_YGREEN);
-    if (!p.armor.empty()) UI::bar(hx + 11, hy + 14, 40, 2, p.armor.data / float(itemDef(p.armor.id).param), P_BLUE);
+    drawStamina(hx + 11, hy + 10, 40, pl.stamina / p.maxStamina(), pl.exhausted);
+    if (!p.armor.empty()) UI::bar(hx + 11, hy + 15, 40, 2, p.armor.data / float(itemDef(p.armor.id).param), P_BLUE);
     if (s_downT >= 0) {
         bool on = std::fmod(G.realTime, 0.8f) < 0.5f;
         R::text(T1("DOWN {0}s", std::to_string((int)std::ceil(s_downT))), x + 4, y + 32, pal(on ? P_CORAL : P_ORANGE));
@@ -6175,8 +6187,7 @@ void drawHUD() {
         R::rectOutline(barX - 1, yy - 1, barW + 2, 6, pal(P_DARK));
         yy += 7;
     }
-    UI::bar(barX, yy, barW, 3, pl.stamina / p.maxStamina(), P_YGREEN);
-    R::rectOutline(barX - 1, yy - 1, barW + 2, 5, pal(P_DARK));
+    drawStamina(barX, yy, barW, pl.stamina / p.maxStamina(), pl.exhausted);
     if (s_hordeActive || p.baseHp < baseMaxHp()) {
         yy += 6;
         bool hit = s_hordeActive && std::fmod(G.realTime, 0.6f) < 0.3f && p.baseHp < baseMaxHp() * 0.35f;

@@ -93,6 +93,14 @@ void addRaw(const std::string& relPath, const std::vector<uint8_t>& fileBytes) {
     parseSheet(key, frames);
     r.tileset = key.find("tileset") != std::string::npos;
     if (r.tileset) frames = 1;
+    // Some of the pack's sheets are misnamed (Character_side_death2/3 say Sheet6 but hold
+    // seven 21-pixel frames): a count that does not divide the width is taken as the
+    // nearest one that does, or the frames would be cut through the middle of the art.
+    if (frames > 1 && w % frames != 0)
+        for (int d = 1; d <= 2; d++) {
+            if (w % (frames + d) == 0) { frames += d; break; }
+            if (frames - d > 1 && w % (frames - d) == 0) { frames -= d; break; }
+        }
     r.frameCount = frames;
     r.key = key;
     // Raiders wear the player's art; give them a copy with the green shirt dyed red,
